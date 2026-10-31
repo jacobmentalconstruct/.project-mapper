@@ -1,0 +1,203 @@
+# Changelog
+
+All notable changes to ProjectMapper. Versions follow [PEP 440](https://peps.python.org/pep-0440/).
+
+## Unreleased
+
+### Added
+
+- **Hover help for every control** in every window, from one reviewed text registry
+  (`tools/tooltips.py`). A test fails if a control has no registered help.
+
+### Fixed
+
+- **Project changesets may name an existing file by the path it has after an earlier
+  move.** Move then patch, delete or move again, and operations on the contents of a moved
+  folder, used to validate but be refused at apply time. The original source is still
+  re-checked, so an outside edit after review is still refused.
+- **Version 1 project patches are reviewed as strictly as they are applied.** An unknown
+  field is now refused at review instead of after approval.
+
+## 1.1.0 — 2026-10-02
+
+Local CLI and MCP adapters let agent clients inspect, snapshot and transform a project
+through the shared action layer, with root confinement, forced backups and local human
+approval for writes. See [the integration guide](docs/agent-integration.md).
+
+### Added
+
+- **`projectmapper-cli`**: JSON-first scan, compile, export, patch validation, approved
+  patch application and session history commands, with stable exit codes.
+- **`projectmapper-mcp`**: optional stdio MCP server (`pip install ".[mcp]"`) with
+  action-derived tool schemas, bounded results, tree/snapshot resources and support for
+  current and legacy protocol clients.
+- **Trusted approval window for agent writes**: displays affected paths and the exact
+  proposed diff; denial, close and timeout leave files unchanged. Project applies always
+  ask; a desktop setting controls single-file approval prompts.
+- Desktop **Settings…** controls for result/resource limits, approval timeout and the
+  single-file approval preference.
+- [CLI and MCP integration guide](docs/agent-integration.md) and Phase 9 acceptance
+  evidence.
+
+### Changed
+
+- Agent writes are confined to their configured project root and keep backups where
+  supported. The agent cannot disable those backups or approve a write through a tool
+  argument, flag, stdin or MCP elicitation.
+- The desktop action layer and its v1.0 contracts remain unchanged; the adapters add
+  their own allow-list, path checks, size limits and approval boundary.
+
+## 1.0.0 — 2026-09-25
+
+The first stable release. Every shared action has a documented contract
+([docs/developer-guide.md](docs/developer-guide.md)), and every desktop control is covered by
+an automated test ([docs/ui-map.md](docs/ui-map.md)).
+
+### Added
+
+- **Project patch review**: a per-file list with status, +/− and hunk counts;
+  Source / Diff / Result views; diff-hunk navigation with a position indicator and
+  highlighting in all three views; keyboard shortcuts (Alt+↑/↓, F8/Shift+F8, Ctrl+Enter).
+- Colour-highlighted diffs in both patchers. Lines are classified by hunk line counts,
+  so content such as `--- comment` is never shown as a file header.
+- Headless backup actions: list, preview (current vs backup), restore with approval
+  (saving a pre-restore copy first), and approval-bound clean-up of old generations.
+- Session **operation history** (`history.query`): one record per operation from any
+  client, with outcome, duration, approval, affected paths, errors and backup
+  references; progress is counted, not listed, so it cannot push other operations out.
+- **History window** (log panel → **History…**): filter by category, outcome and
+  text; live updates; details with the labelled error, approval, paths, backup
+  references (with **Open Backups…**) and tracebacks for internal problems.
+- **Backups window** (main window → **Backups…**): generation list with integrity
+  status, Current / Diff / Backup comparison, Restore File / Restore All Files,
+  Clean Up (keep newest N) and Delete Selected. Recovery messages point to it.
+- The text editor has a **Keep backup** option for Save and for Save As over an
+  existing file (`text.save_as` accepts an optional `backup` flag).
+- Developer documentation: every action's payload, approvals, events, error codes and
+  history ([docs/developer-guide.md](docs/developer-guide.md)), and a map of every
+  desktop control to the test that drives it ([docs/ui-map.md](docs/ui-map.md)).
+
+### Changed
+
+- Project patch validation reports every file's problems at once, each naming its
+  file and hunk; Apply is still available only when the whole manifest is valid.
+  `project_patch.validate` returns the full review (`valid`, `errors`, per-file
+  outcomes) and issues a plan only when valid.
+- The approval dialog lists per-file and total +/− counts.
+- New Project Patcher windows start with an empty manifest; **Copy Schema** copies the
+  full example; **Add File…** replaces an untouched example and uses a unique-line
+  hunk template instead of the whole file.
+- **Keep .bak backups** moved beside Apply. Disabled action buttons are greyed, and
+  editor scrollbars follow the dark theme.
+- Backups are managed **generations** instead of sibling `.bak` files. Project files
+  back up to `_projectmapper/backups/`; files outside the project root go to a
+  per-user store. The options are now labelled **Keep backup** / **Keep backups**.
+  Existing `.bak` files are never touched.
+- Files inside `_projectmapper/` can no longer be project-patch targets.
+- The main window fits smaller screens: its controls are in four shorter rows, and it
+  has a minimum size at which every control is visible (about 650×560 px). **Open
+  Output Folder** is now at the start of the second row. The "Hide pattern" label,
+  entry and Add button read left to right. The log starts smaller, so the project
+  tree gets more of the window; drag the divider to resize them.
+- The Backups window's "keep newest" box follows the dark theme.
+- The main log keeps its most recent 2,000 lines, and progress updates go to the
+  status bar instead of one log line each.
+- Error messages read "Label: detail" with one consistent label per error code, for
+  example "The file changed on disk: …". Rejected inputs from the patch engines
+  (invalid JSON, undecodable text) report `invalid_input` ("Invalid request")
+  instead of the generic `action_failed`. Linked paths and the read-only `.parts`
+  folder report `unsafe_path` ("That location is not allowed"). A project patch
+  refused because a file changed after its preview reports `source_changed` ("The
+  file changed on disk"), as single-file saves do; it was reported as "Invalid
+  request".
+
+### Fixed
+
+- A snapshot written in an unsupported format version (`snapshot_schema_version`)
+  could be exported as current; it is now refused as out of date. A missing or
+  unreadable snapshot now says so, instead of claiming it belongs to another project.
+- When a write failed and removing its temporary file also failed, the cleanup error
+  was reported instead of the real cause. Cleanup failures no longer mask the outcome
+  (single-file saves, atomic writes, staging, backup blobs, new files).
+- Errors raised inside window callbacks were written to stderr, which the installed
+  app (`pythonw`) discards. They are now logged in one line and recorded in History
+  with the traceback. Event-listener failures and worker crashes are handled the
+  same way.
+- Routine action failures in background tasks (for example a compile refused
+  because a file changed) were logged as `CRASH` with a full traceback; they are now
+  one concise line.
+- A second backed-up save of the same file failed (`WinError 183`, `.bak` exists).
+- Any existing `.bak` file, even one the user made, blocked a whole project apply
+  with backups on.
+- After a failed rollback, the message claimed the original was "retained in this
+  session", but it was discarded. Originals are now saved durably in a `recovery`
+  generation that the message names; if that fails, the message says so.
+- **Add File…** on a new Project Patcher window produced a manifest that failed
+  validation on the built-in example entry.
+- **Keep .bak backups** and the review position were cut off at the minimum window size.
+
+### Requirements
+
+Python 3.10 or newer with Tkinter. Tested on Windows 10 with Python 3.10, 3.11, 3.12,
+3.13 and 3.14; macOS and Linux are expected to work but untested.
+
+## 0.4.0 — 2026-09-23
+
+The first release since the single-file 0.3.0 snapshot compiler. ProjectMapper now
+works in both directions: it hands a project to a reviewer or agent, and it applies
+the returned changes safely.
+
+### Added
+
+- **Tokenizing Patcher**: apply JSON search/replace hunks to one file. Hunks are
+  matched exactly, then whitespace-tolerant, and inherit indentation; ambiguity and
+  overlap are rejected. Preview, apply to result, then save, optionally as a version
+  or with a `.bak`. Linked **&** Validate/Apply controls.
+- **Project Patcher**: a multi-file manifest in the same hunk schema. Every file is
+  validated first and shown as a combined diff; application requires an explicit
+  approval of that exact preview. Rollback restores only files this operation replaced.
+- **Text editor** with guarded saves, find/replace, read-only mode and stale-source
+  detection; **New Text File** (TextTOUCHER) with exclusive creation; **Delete File**
+  with blocking, default-deny approval.
+- **Exclusions manager**: built-in, custom and `.gitignore` rules with per-rule
+  enable/disable and batch actions.
+- **Diagnostics**: import, root, output-writability, SQLite and reference-isolation checks.
+- A headless **action layer**. Every desktop operation runs through one dispatcher,
+  with structured results, ordered events, per-operation cancellation, duplicate-request
+  protection, and approvals that ordinary requests cannot forge.
+- Standard packaging: `pip install .` provides the `projectmapper` command and
+  `python -m projectmapper`, with an optional project-folder argument and `--version`.
+
+### Changed
+
+- Large projects: fresh metadata scans read each entry once. The tree renders lazily
+  in batches, and selection is kept in a model independent of rendered rows, so
+  unopened folders are still captured correctly. On a 10,000-file fixture, scan
+  went from 10.7s to 1.2s and first render from 0.79s to 0.015s.
+- Snapshot freshness covers file contents, selection, exclusion rules and capture
+  options, and is tied to a project generation so results from an earlier root are
+  rejected.
+- On startup the mapper opens the folder given on the command line, otherwise the
+  current directory. It no longer opens its own source folder.
+- The source moved to `src/projectmapper/`. `run.bat` still launches from a checkout
+  or vendor export.
+
+### Fixed
+
+- A file that changed during capture and then changed back (A→B→A) could be
+  published as a fresh snapshot containing B. Captured bytes are now bound to the
+  snapshot signature; such a compile is refused and the previous snapshot is kept.
+- Cancelled or failed compiles no longer replace or delete the previous snapshot.
+- Backups never overwrite an existing file; project-patch rollback no longer
+  overwrites later external edits.
+- `requirements.txt` no longer installs the unrelated PyPI `tk` package. ProjectMapper
+  has no third-party runtime dependencies.
+
+### Requirements
+
+Python 3.10 or newer with Tkinter (included with the python.org installers).
+
+## 0.3.0 — 2026-06
+
+Single-file snapshot compiler: project tree, selection, SQLite snapshot, and Markdown
+tree/filedump exports; blank-slate vendor export.

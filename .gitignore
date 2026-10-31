@@ -1,0 +1,19 @@
+# Virtual environment
+.venv/
+
+# Generated artifacts — kept outside git so updates don't disturb your data
+spines/
+snapshots/
+exports/
+backups/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db

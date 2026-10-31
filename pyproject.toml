@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "projectmapper"
+dynamic = ["version"]
+description = "Map a project folder, compile portable SQLite snapshots, and apply reviewed text patches."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE.md"]
+requires-python = ">=3.10"
+dependencies = []
+# CI matrix: ubuntu-latest, macos-latest, windows-latest × Python 3.10/3.13/3.14
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: Developers",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+mcp = ["mcp>=2.2.0,<3"]
+
+[project.gui-scripts]
+projectmapper = "projectmapper.app:main"
+
+[project.scripts]
+projectmapper-cli = "projectmapper.cli:main"
+projectmapper-mcp = "projectmapper.mcp:main"
+spine-cli = "projectmapper.tools.spine_cli:main"
+
+[project.urls]
+Repository = "https://github.com/jacobmentalconstruct/_ProjectMAPPER"
+
+[tool.setuptools.dynamic]
+version = { attr = "projectmapper.core.config.APP_VERSION" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["projectmapper*"]

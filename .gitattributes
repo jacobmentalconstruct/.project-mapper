@@ -1,0 +1,20 @@
+# Ensure shell scripts always have LF line endings
+*.sh text eol=lf
+
+# Windows scripts use CRLF
+*.bat text eol=crlf
+
+# Python and everything else: auto
+*.py text=auto
+*.md text=auto
+*.toml text=auto
+*.txt text=auto
+*.json text=auto
+*.jsonl text=auto
+
+# Binaries
+*.ico binary
+*.png binary
+*.PNG binary
+*.jpg binary
+*.gif binary

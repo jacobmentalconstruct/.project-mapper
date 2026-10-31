@@ -39,7 +39,7 @@ projectmapper-mcp = "projectmapper.mcp:main"
 spine-cli = "projectmapper.tools.spine_cli:main"
 
 [project.urls]
-Repository = "https://github.com/jacobmentalconstruct/_ProjectMAPPER"
+Repository = "https://github.com/jacobmentalconstruct/.project-mapper"
 
 [tool.setuptools.dynamic]
 version = { attr = "projectmapper.core.config.APP_VERSION" }

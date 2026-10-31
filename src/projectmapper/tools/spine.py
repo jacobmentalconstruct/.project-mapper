@@ -106,7 +106,7 @@ class Spine:
         if not self._path.exists():
             return
         try:
-            text = self._path.read_text("utf-8")
+            text = self._path.read_text("utf-8-sig")
         except OSError as exc:
             log.warning("Cannot read spine %s: %s", self._path, exc)
             return

@@ -479,7 +479,7 @@ class ProjectMapperApp:
         self._setup_ui()
         self.process_gui_queue()
         self._activity_blinker()
-        self.log_message("ProjectMapper loaded. Choose a project root, curate the tree, then compile a SQLite snapshot.")
+        self.log_message("ProjectMapper loaded. Curate the tree, then compile a SQLite snapshot.")
         self.root.after(250, self.request_rescan_tree_silent)
 
     def action(self, name, payload=None, **options):
@@ -633,30 +633,60 @@ class ProjectMapperApp:
         self.root.configure(bg=THEME["app_bg"])
         self.root.geometry("1200x850")
 
-        top_frame = tk.Frame(self.root, bg=THEME["panel_bg"])
-        top_frame.pack(fill=tk.X, padx=4, pady=8)
-
-        tk.Label(top_frame, text="Project Root:", bg=THEME["panel_bg"], fg=THEME["text"]).pack(side=tk.LEFT)
         self.widgets["selected_root_var"] = tk.StringVar(value=str(self.initial_root))
-        self.widgets["project_path_entry"] = tk.Entry(
-            top_frame,
-            textvariable=self.widgets["selected_root_var"],
-            width=12,
-            bg=THEME["field_bg"],
-            fg=THEME["field_text"],
-            insertbackground=THEME["field_text"],
-            relief=tk.FLAT,
-        )
-        attach_tooltip(self.widgets["project_path_entry"], "main.project_root", THEME)
-        self.widgets["project_path_entry"].pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
-        self.widgets["project_path_entry"].bind("<Return>", lambda _event: self.choose_root_from_entry())
 
-        self._make_button(top_frame, "Choose...", self.choose_root_dialog, THEME["secondary"], THEME["secondary_hover"], tooltip_id="main.choose_root").pack(side=tk.RIGHT)
-        self._make_button(top_frame, "Settings…", self.open_settings, THEME["panel_alt_bg"], THEME["field_bg_alt"], tooltip_id="main.settings").pack(side=tk.RIGHT, padx=5)
-        self._make_button(top_frame, "↑", self.navigate_to_parent, THEME["panel_alt_bg"], THEME["field_bg_alt"], tooltip_id="main.parent").pack(side=tk.RIGHT, padx=5)
+        # -- Header: project identity + settings gear --
+        header = tk.Frame(self.root, bg=THEME["panel_bg"])
+        header.pack(fill=tk.X, padx=10, pady=(6, 2))
+
+        gear_btn = tk.Button(
+            header,
+            text="⚙",
+            command=self.open_settings,
+            bg=THEME["panel_bg"],
+            fg=THEME["muted_text"],
+            activebackground=THEME["field_bg_alt"],
+            activeforeground=THEME["text"],
+            relief=tk.FLAT,
+            bd=0,
+            font=("", 13),
+            cursor="hand2",
+        )
+        gear_btn.pack(side=tk.RIGHT, padx=(4, 2), pady=2)
+        attach_tooltip(gear_btn, "main.settings", THEME)
+
+        self.widgets["project_name_label"] = tk.Label(
+            header,
+            text=self.initial_root.name,
+            bg=THEME["panel_bg"],
+            fg=THEME["text"],
+            font=("", 11, "bold"),
+            anchor="w",
+        )
+        self.widgets["project_name_label"].pack(side=tk.LEFT, padx=(6, 4), pady=4)
+
+        self.widgets["project_path_label"] = tk.Label(
+            header,
+            text=str(self.initial_root),
+            bg=THEME["panel_bg"],
+            fg=THEME["muted_text"],
+            font=("", 9),
+            anchor="w",
+        )
+        self.widgets["project_path_label"].pack(side=tk.LEFT, padx=(0, 4), pady=4, fill=tk.X, expand=True)
+
+        def _sync_project_display(*_):
+            root_str = self.widgets["selected_root_var"].get()
+            try:
+                p = Path(root_str)
+                self.widgets["project_name_label"].config(text=p.name or root_str)
+                self.widgets["project_path_label"].config(text=root_str)
+            except Exception:
+                pass
+        self.widgets["selected_root_var"].trace_add("write", _sync_project_display)
 
         outer_paned = ttk.PanedWindow(self.root, orient=tk.VERTICAL)
-        outer_paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        outer_paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 5))
 
         top_paned = ttk.PanedWindow(outer_paned, orient=tk.HORIZONTAL)
         outer_paned.add(top_paned, weight=3)

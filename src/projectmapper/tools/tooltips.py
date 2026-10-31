@@ -2,10 +2,7 @@
 
 TOOLTIPS = {
     "main.breadcrumb": "Navigate to this folder.",
-    "main.project_root": "Enter the project folder to map. Press Return to open it.",
-    "main.choose_root": "Choose a project folder from the file browser.",
-    "main.settings": "Set adapter result limits and approval preferences.",
-    "main.parent": "Move the project view up to its parent folder.",
+    "main.settings": "Open settings: adapter result limits and approval preferences.",
     "main.tree": "Select files for capture. Right-click a row for file and folder tools.",
     "main.compile": "Scan selected files and build the SQLite snapshot.",
     "main.export_tree": "Export the folder and file tree as Markdown.",

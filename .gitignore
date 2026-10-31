@@ -6,6 +6,7 @@ spines/
 snapshots/
 exports/
 backups/
+refs/
 
 # Python
 __pycache__/

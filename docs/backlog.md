@@ -82,11 +82,9 @@ Several internal tool names read strangely to outside contributors. Candidates:
 A rename touches: class name, menu label, docs, spine filename, memory files. No logic changes.
 **Effort:** medium per tool. **Risk:** low (mechanical).
 
-### C7 · Retire "Export Sidecar ZIP"
-`create_sidecar_export` targets the old `.projectmapper/app/` layout which no longer exists.
-Public distribution is now via `gh repo clone ... .project-mapper` — no ZIP needed.
-Remove the button and deprecate the function. Audit whether any test or downstream code still
-references `sidecar_export`.
+### ~~C7 · Retire "Export Sidecar ZIP"~~ ✓ done
+Button removed (2026-10-31). Dead functions `export_sidecar_app` / `_export_sidecar_app_impl` /
+`create_sidecar_export` remain — remove in a future Tier A cleanup pass.
 
 ### C8 · "Vend a Copy" — rename + destination picker for vendor export
 `Export Vendor App` → **"Vend a Copy"**: rename the button, add a folder picker so the user

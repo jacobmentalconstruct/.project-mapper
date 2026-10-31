@@ -757,11 +757,6 @@ class ProjectMapperApp:
             vendor_button.configure(state=tk.DISABLED)
         vendor_button.pack(side=tk.LEFT, padx=4)
         self.widgets["vendor_export_button"] = vendor_button
-        sidecar_button = self._make_button(tool_row, "Export Sidecar ZIP", self.export_sidecar_app, THEME["linked"], THEME["linked_hover"], tooltip_id="main.vendor_export")
-        if SOURCE_ROOT is None:
-            sidecar_button.configure(state=tk.DISABLED)
-        sidecar_button.pack(side=tk.LEFT, padx=4)
-        self.widgets["sidecar_export_button"] = sidecar_button
         self._make_button(tool_row, "Diagnostics", self.run_diagnostics, THEME["panel_alt_bg"], THEME["field_bg_alt"], tooltip_id="main.diagnostics").pack(side=tk.RIGHT, padx=4)
         self.widgets["backups_button"] = self._make_button(tool_row, "Backups…", self.open_backups,
                                                            THEME["panel_alt_bg"], THEME["field_bg_alt"], tooltip_id="main.backups")

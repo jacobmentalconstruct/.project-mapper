@@ -1,0 +1,140 @@
+# Desktop action inventory
+
+Tranche 2 review, 2026-09-16; adapter notes added for Phase 9 on 2026-10-02. The
+desktop calls the same Controller/Dispatcher as headless in-process clients. The CLI
+and MCP adapters add a separate allow-list and root confinement; neither is an
+operating-system process sandbox. See [agent-integration.md](agent-integration.md) for
+their public command and tool surfaces.
+
+| Desktop operation | Shared action |
+| --- | --- |
+| Choose root, parent, descend, path entry | project.set_root |
+| Refresh tree | project.scan |
+| Folder/file checkbox, select all/none | selection.set |
+| Add, toggle, enable/disable/delete exclusion rules | exclusions.update |
+| Inspect/reload exclusion rules | exclusions.inspect |
+| Binary capture option | capture.configure |
+| Compile, discover, export tree/filedump/combined/manifest | snapshot.compile / snapshot.require / snapshot.export |
+| Vendor export | vendor.export |
+| Output folder creation/resolution | output.location |
+| Diagnostics | application.diagnostics |
+| Editor and patcher open/reload/read | text.open |
+| Editor save / Save As | text.save / text.save_as |
+| Find / Replace All | text.find / text.replace |
+| Filename preview / Create | file.name / file.create |
+| Delete | file.delete |
+| Load patch / Copy Schema | patch.load / patch.schema |
+| Single-file preview / Apply to Result / Save | patch.validate / patch.result / patch.save |
+| Project Add File / preview / Apply | project_patch.add_entry / project_patch.validate / project_patch.apply |
+| Backups window: list, compare, restore, delete, clean up | backup.list / backup.preview / backup.restore / backup.prune_preview / backup.prune |
+| History window: filter, refresh, details, live updates | history.query (plus dispatcher subscribe) |
+| Progress window: Cancel | Dispatcher.cancel of the running operations |
+
+Every control, key and menu entry, with the test that drives it, is listed in
+`ui-map.md` (Tranche 8).
+
+Phase 5 contract notes (2026-09-23):
+- `project_patch.validate` succeeds whenever the manifest itself is well formed and
+  returns `valid`, `errors` and per-file outcomes (status, error, counts, diff hunks,
+  flags). `plan_id` is `null` unless every file is valid. Manifest-level errors
+  (JSON, duplicates, unsafe or missing paths) still fail the action.
+- `patch.schema` with `project: true` returns the full example manifest.
+- `project_patch.apply` approval summaries include per-file and total +/− counts.
+- Review selection, hunk navigation and highlighting are presentation-only; they
+  never change the plan.
+
+Phase 6 contract notes (2026-09-24):
+- The `backup` flag of `text.save`, `patch.save` and `project_patch.apply` now
+  creates a managed generation (`core/backups.py`) in the target's scope (project
+  store or per-user store), not a sibling `.bak`. If a requested backup fails, the
+  write does not happen.
+- `project_patch.apply` always saves unrestorable originals in a `recovery`
+  generation; its `recovery_required` message names the generation or says it
+  could not be saved.
+- `project_patch.validate` refuses targets inside `_projectmapper/`.
+- New headless actions (desktop window in step 6.4):
+
+  | Action | Contract |
+  | --- | --- |
+  | `backup.list` | `{scope?}` → generations of the project and/or user store with status (`ok`/`incomplete`/`corrupt`), kind, files and size. Read-only. |
+  | `backup.preview` | `{scope, generation, targets?}` → per-file current-vs-backup diff and a single-use restore `plan_id` bound to the generation, the files, the backup sha256 and the current sha256 (or "missing"). Refuses targets inside `_projectmapper/`. |
+  | `backup.restore` | `{plan_id}` → trusted approval. Re-checks current and backup bytes, saves existing current bytes as a `pre-restore` generation, then writes each file atomically. A partial failure is `recovery_required` and names what was restored and the pre-restore generation. |
+  | `backup.prune_preview` | `{scope, keep, include?}` → candidates (ok `backup`/`pre-restore` generations beyond the newest `keep`, plus explicitly included verified ids, including `recovery`) and `not_eligible` (incomplete/corrupt). |
+  | `backup.prune` | `{plan_id}` → trusted approval. Removes each candidate only if it is still verified, its manifest fingerprint matches the preview, and it contains only its recorded files. Anything else is reported and left in place. |
+
+Phase 7 contract notes (2026-09-24):
+- `history.query` `{category?, outcome?, text?, limit? (1–1000, default 200)}` → read-only
+  `operations`, newest first. One record per operation: id, action, category, origin,
+  status, accepted/started/finished times, `duration_ms`, approval
+  (`requested`/`approved`/`denied`) with title and message, `progress_count` and
+  `last_progress`, `paths` (≤50), `count`, `error` `{code, message}`, `generations`
+  named. The history keeps 500 operations in the session, never evicts unfinished
+  ones, stores no file contents, and does not record its own queries.
+- `create_application(root, dispatcher=None)` optionally accepts a dispatcher (additive).
+- Error codes: the full set is 19 codes, each with a human label in
+  `application/errors.py` (`describe(error)` → "Label: detail"; unknown codes →
+  "Operation failed"). Clients should branch on codes and show labels. A test fails
+  if a new code appears without a label.
+- **Refinement:** an unexpected `ValueError` raised by a handler (engine rejections
+  such as `PatchError`, JSON or Unicode decode errors) now reports `invalid_input`
+  instead of `action_failed`. `OSError` stays `io_error`; everything else stays
+  `action_failed`.
+- Internal problems recorded in History use `internal_error`.
+- Event addition: an `accepted` event now carries `{"target": {...}}` holding only the
+  whitelisted string request fields `path`, `root`, `folder`, `generation` and `scope`
+  (each ≤4,096 characters), so failed operations still show their target. Text,
+  manifests and patches never appear in events.
+
+Phase 8 contract notes (2026-09-24):
+- `text.save_as` accepts an optional `backup` flag (additive). When the target
+  exists and the overwrite is approved, its previous bytes are saved as a backup
+  generation first; a failed backup prevents the write. A new file has nothing to
+  back up, so the flag is ignored. The editor's **Keep backup** sets the flag for
+  both Save and Save As.
+
+Phase 10.5 contract notes (2026-10-03):
+- `project_patch.validate` accepts both version 1 `files` manifests and version 2 `ops`
+  changesets. Version 2 reviews return operation-level paths, warnings and content previews;
+  `patch.schema` with `project: true` returns the version 2 example.
+- `project_patch.apply` consumes the exact reviewed plan. Version 1 patches and version 2
+  `patch` operations follow the existing content-edit approval rules. For adapter origins,
+  version 2 `mkdir`, `create` and move/rename operations run without a prompt by default;
+  `ask_before_structural_writes` enables one summary prompt. Delete operations remain
+  approval-gated. All applied operations are changesets that can be undone from Backups.
+- New structural actions use `{path, name}` for file/folder rename, `{path, to}` for moves,
+  `{path}` for folder creation, and `{path, recursive?}` for folder deletion. `file.delete`
+  is now exposed to the CLI/MCP adapters behind trusted approval. These actions are
+  confined to the configured project root and record affected paths in history.
+
+Linked buttons compose the same actions. Project Apply consumes the displayed
+plan ID, including after approval; it never silently rebuilds a preview.
+
+Control-plane seams are synchronous: Controller.reserve_scan supersedes older scans
+under the state lock without waiting for their I/O. Dispatcher.cancel cancels a
+specific operation; enqueueing cancellation behind the operation would defeat it.
+Dispatcher.subscribe/get/wait expose observation. The trusted approval resolver is
+kept separate from ordinary requests. Future transports must not export it to agents.
+
+Presentation remains local: window/dialog opening, folder choice, field editing,
+focus, scroll/expansion, clipboard delivery, read-only and undo state, menu availability,
+and opening the OS file browser at the service-resolved output path. Destination
+chooser checks are advisory; actions independently enforce path/write rules.
+The filedump's include-tree checkbox is a projection argument to snapshot.export.
+
+The GUI queue projects external root, tree, selection, exclusion and capture-option
+changes onto Tk. Operation identity distinguishes this desktop's requests; origin
+labels are attribution only. Writes trigger a rescan and editor freshness checks.
+Editors also check on focus, preserve unsaved buffers, and refuse stale saves through
+the service fingerprint check. No continuous filesystem watcher is provided.
+
+Compatibility properties delegate to controller/state. `_accept_compiled_snapshot`
+remains an internal compatibility/test helper; production compilation and freshness
+decisions belong to snapshot actions. Scan rendering no longer recalculates selection
+or republishes controller state. UI task names track presentation-worker lifetimes;
+dispatcher operation IDs track domain execution and cancellation.
+
+Tranche 3 completed lazy widgets and measured performance. Expansion/scrolling stay
+presentation-only; Controller delegates rows and capture selection to LogicalTree.
+Snapshot ABA byte binding,
+durable recovery generations, richer patch review and history remain separately
+tracked work. A successful tranche 2 audit does not claim those guarantees.

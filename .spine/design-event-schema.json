@@ -1,0 +1,40 @@
+{
+  "id": "design-event",
+  "version": 1,
+  "properties": {
+    "event_time": {
+      "type": "string",
+      "label": "Event Time",
+      "description": "When this event occurred (ISO 8601 or approximate date)"
+    },
+    "event_type": {
+      "type": "string",
+      "label": "Event Type",
+      "enum": [
+        "intent",
+        "constraint",
+        "decision",
+        "revision",
+        "implementation",
+        "verification",
+        "open-question",
+        "current-state"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "format": "textarea",
+      "label": "Summary"
+    },
+    "decision_or_outcome": {
+      "type": "string",
+      "format": "textarea",
+      "label": "Decision / Outcome"
+    },
+    "open_questions": {
+      "type": "string",
+      "format": "textarea",
+      "label": "Open Questions"
+    }
+  }
+}

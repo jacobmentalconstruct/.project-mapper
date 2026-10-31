@@ -1,0 +1,7 @@
+{
+  "event_time": "2026-09-23",
+  "event_type": "constraint",
+  "summary": "Core invariants established for SchemaTOUCHER: (1) last registered schema = default working schema on spine open; (2) every entry references its exact schema ID@version; (3) Browse renders each entry under its own recorded schema, independent of the Entry Form active schema.",
+  "decision_or_outcome": "These invariants are non-negotiable and must be preserved across all changes. The three-tab UI (Entry Form / Schema Editor / Browse Entries) is settled and must not be redesigned.",
+  "open_questions": ""
+}

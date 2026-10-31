@@ -1,0 +1,7 @@
+{
+  "event_time": "2026-10-27",
+  "event_type": "revision",
+  "summary": "textarea field type added after initial implementation. Motivation: prose fields (summaries, notes, descriptions) need multiline plain-string input, not JSON-object input. The existing object/array Text widget parsed its content as JSON, which was wrong for plain prose.",
+  "decision_or_outcome": "Added _is_textarea() check: type=string with format=textarea creates a plain Text widget with _textarea=True marker. _get_value returns raw string (rstrip newline), not JSON-parsed. _set_value inserts str(value) without JSON-encoding. Labelled Browse tab added to show context while browsing.",
+  "open_questions": ""
+}

@@ -1,6 +1,9 @@
 # Virtual environment
 .venv/
 
+# Sidecar install — holds dev spines, snapshots, plans; not public
+.project-mapper/
+
 # Generated artifacts — kept outside git so updates don't disturb your data
 spines/
 snapshots/

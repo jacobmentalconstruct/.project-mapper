@@ -1,0 +1,7 @@
+{
+  "event_time": "2026-09-23",
+  "event_type": "decision",
+  "summary": "Entry Form / Browse schema isolation decision: the Browse tab must use each entry's recorded schema key to resolve labels, never the Entry Form's currently active schema. Navigating Browse must not change the Entry Form schema.",
+  "decision_or_outcome": "_format_entry_readable() resolves schema from the entry record itself. _browse_prev/_browse_next do not touch _schema_key or _schema_def. Verified by test_browse_navigation_does_not_change_entry_form_schema and test_browse_uses_entry_schema_for_labels.",
+  "open_questions": ""
+}

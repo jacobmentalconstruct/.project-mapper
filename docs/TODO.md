@@ -1,0 +1,104 @@
+# Remaining engineering work
+
+These follow-up items remain after v1.1.0. Each names what is known, what is not, and a
+starting point. Decisions behind them are in the plan's decision log
+(`plans/2026-09-16-application-hardening-and-action-layer.md`, section 17).
+
+## 1. Cross-platform CI (complete; decision E3)
+
+Phase 9 is complete and v1.1.0 is tagged and pushed. The workflow in
+`.github/workflows/tests.yml` covers Windows, macOS and Linux on Python 3.10, 3.13 and
+3.14, checks Tk startup, and uses Xvfb for Linux UI tests. Runs `37121817805` through
+`37129895448` identified and fixed platform-specific behavior, fixture paths, toolbar sizing,
+Aqua metrics, an approval-denial hang, and hidden-root Tk event
+loops. The final fixes use viewable roots in the affected tests and the shared desktop test
+fixture. A project-patch regression test exercises UTF-8 BOM retention, mixed CRLF/CR/LF
+endings, no final newline, and relative indentation through validation and write. Hosted run
+[`37139891049`](https://github.com/jacobmentalconstruct/_ProjectMAPPER/actions/runs/37139891049)
+passes all nine Windows, macOS, and Linux jobs on Python 3.10, 3.13, and 3.14. Cross-platform
+CI acceptance is complete through Phase 10.5. Hosted run `37145383336` passed the Phase 10.3
+matrix; Phase 10.4 backup manifest v2, changeset recording, whole-changeset undo, and
+Backups-window wording pass the Windows full suite (427 passed, 2 skipped) and hosted run
+[`37148797317`](https://github.com/jacobmentalconstruct/_ProjectMAPPER/actions/runs/37148797317)
+across all nine Windows/macOS/Linux × Python 3.10/3.13/3.14 jobs. Phase 10.5 passed the
+Windows Python 3.13 suite (437 passed, 2 skipped), changed-file Ruff and hosted run
+[`37151399734`](https://github.com/jacobmentalconstruct/_ProjectMAPPER/actions/runs/37151399734)
+across all nine jobs. Next is Phase 10.6a and 10.6 in the
+[Phase 10 plan](plans/2026-10-02-project-transforms.md). Keep compatibility claims tied to
+the tested matrix.
+
+## 2. Tk start-up failure under standard-handle swapping (decision E4)
+
+**Known (2026-09-25):**
+- On Windows, creating a Tk interpreter shortly after the process's standard handles have
+  been swapped (`os.dup2` onto fds 1/2, as pytest's default `--capture=fd` does) sometimes
+  fails. Forms seen:
+  - "couldn't read file …/init.tcl: No error"
+  - "no such file or directory" for an existing `tk8.6/*.tcl`
+  - `invalid command name "tcl_findLibrary"`
+- Measured: 5 failures in 7,000 roots with a swap, 0 in 22,000 without. It happens on
+  Tcl 8.6.12 and 8.6.15, with Python 3.10, 3.13 and 3.14. It reproduces with no
+  ProjectMapper code.
+- Worked around for the test suite with `--capture=sys` in `pytest.ini`. The application
+  never swaps OS-level handles.
+
+**Not known:**
+- The Tcl-internal mechanism: why a handle swap makes later `CreateFileW`/`ReadFile` calls
+  on library files fail.
+- Whether antivirus file-system filtering (Windows Defender here) takes part.
+- Whether it happens on other Windows machines.
+
+**Starting point.** This reproducer has no pytest and no project code. It shows about 2
+failures per 3,000 iterations on the development machine:
+
+```python
+import gc, os, tempfile, tkinter as tk
+failures = 0
+for i in range(3000):
+    tmp = tempfile.TemporaryFile(buffering=0)
+    saved = {fd: os.dup(fd) for fd in (1, 2)}
+    for fd in (1, 2):
+        os.dup2(tmp.fileno(), fd)
+    try:
+        gc.collect()
+        root = tk.Tk(); root.withdraw(); root.update(); root.destroy()
+    except tk.TclError as exc:
+        failures += 1
+        print(str(exc).splitlines()[0])
+    finally:
+        for fd, copy in saved.items():
+            os.dup2(copy, fd); os.close(copy)
+        tmp.close()
+print("failures:", failures)
+```
+
+Then, one change at a time:
+1. Run it on another Windows machine or in Windows Sandbox. This separates this machine
+   from Tcl/Windows in general.
+2. As administrator, temporarily exclude the Python install folders from Defender and
+   rerun. This tests whether the antivirus filter takes part.
+3. Record a Process Monitor trace filtered on `*.tcl`, to see the Windows result code
+   behind the failing open or read.
+4. If it is Tcl's, reduce it to a Tcl-only script (`tclsh` with redirected standard
+   handles) and report it upstream (core.tcl-lang.org tickets).
+
+Before removing the workaround, run the full suite repeatedly under `--capture=fd`.
+
+## 3. Two recorded, unexplained test-environment events
+
+Low priority; neither has recurred.
+- **Tranche 6 silent 3.10 run:** one invocation produced no output, with its exit code
+  masked by a pipe. That process ended before its first test result without any pytest
+  report, which is an abnormal start-up termination. Exit codes are now always captured,
+  so a recurrence would show the code.
+- **Tranche 7 baseline-copy layout failure:** `test_patcher.py::test_controls_fit_minimum_window`
+  failed once, in a `git archive` copy under load. The test measures after a single
+  `root.update()`. It could wait for the geometry to settle (for example, until the
+  window reports the requested size) if it ever recurs.
+
+## 4. Star-import notices
+
+pyflakes reports only notices from the existing `import *` sections in `app.py`,
+`core/exports.py`, `core/snapshots.py` and `core/helpers.py`. Replacing them with explicit
+imports would let pyflakes pass cleanly. Several tests import names through
+`projectmapper.app`, so keep those names available.

@@ -157,15 +157,10 @@ class TextToucherWindow(ToolWindowMixin):
             try:
                 result = self.app.action("file.create", payload)
                 path = Path(result["path"])
-            except FileExistsError:
-                self.app.gui_queue.put(lambda: (
-                    self.status.set("That file already exists. Choose a different name; nothing was overwritten."),
-                    self.set_button_enabled(self.create_button, True, "success")))
-                return
-            except (OSError, ValueError) as exc:
+            except (OSError, ValueError, PatchError) as exc:
                 msg = str(exc)
-                self.app.gui_queue.put(lambda: (
-                    self.status.set(f"Could not create file: {msg}"),
+                self.app.gui_queue.put(lambda: (  # noqa: B023
+                    self.status.set(msg),
                     self.set_button_enabled(self.create_button, True, "success")))
                 return
 

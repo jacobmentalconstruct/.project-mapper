@@ -22,14 +22,14 @@ if __package__:
     from .tree_view import TreeProjection
     from .tools import (PatchError, validate_target, PatcherWindow,
                         TextToucherWindow, TextEditorWindow, ProjectPatcherWindow, BackupsWindow,
-                        HistoryWindow, SettingsWindow, SchemaToucherWindow)
+                        HistoryWindow, SettingsWindow, SchemaToucherWindow, RunCommandWindow)
     from .tools.ui_base import attach_tooltip
     from .core import format_diagnostics, scan_project_tree
 else:
     from tree_view import TreeProjection
     from tools import (PatchError, validate_target, PatcherWindow,
                        TextToucherWindow, TextEditorWindow, ProjectPatcherWindow, BackupsWindow,
-                       HistoryWindow, SettingsWindow, SchemaToucherWindow)
+                       HistoryWindow, SettingsWindow, SchemaToucherWindow, RunCommandWindow)
     from tools.ui_base import attach_tooltip
     from core import format_diagnostics, scan_project_tree
 
@@ -961,6 +961,8 @@ class ProjectMapperApp:
         menu.add_command(label="Project Patcher…", command=lambda: self.open_project_patcher(project_root),
                          state="normal" if can_project_patch else "disabled")
         menu.add_separator()
+        menu.add_command(label="Run Command Here…",
+                         command=lambda: self.open_run_command(folder))
         menu.add_command(label="Open Folder in Terminal",
                          command=lambda: self._open_folder_in_terminal(folder))
         try:
@@ -1042,6 +1044,13 @@ class ProjectMapperApp:
                 subprocess.Popen(["x-terminal-emulator", "--working-directory", str(folder)])
         except OSError as exc:
             self.report_error("Cannot open terminal", exc)
+
+    def open_run_command(self, folder: Path):
+        try:
+            return RunCommandWindow(self, folder)
+        except OSError as exc:
+            self.report_error("Cannot open run-command window", exc)
+            return None
 
     def open_project_patcher(self, folder):
         try:
@@ -1344,6 +1353,17 @@ class ProjectMapperApp:
             lambda e: self._content_grid_canvas.configure(
                 scrollregion=self._content_grid_canvas.bbox("all")
             )
+        )
+        self._content_grid_inner.bind(
+            "<ButtonRelease-1>",
+            lambda e: self._grid_set_focus(-1),
+        )
+        self._content_grid_inner.bind(
+            "<ButtonRelease-3>",
+            lambda e: self._show_path_context_menu(
+                getattr(self, "_content_grid_folder", self.selected_root),
+                e.x_root, e.y_root,
+            ),
         )
         self._content_grid_canvas.bind("<Configure>", self._on_content_grid_resize)
         self._content_grid_canvas.bind(

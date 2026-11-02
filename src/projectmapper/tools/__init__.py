@@ -12,6 +12,7 @@ _MODULES = {
     "BackupsWindow": "backups_ui", "HistoryWindow": "history_ui",
     "SettingsWindow": "settings_ui",
     "SchemaToucherWindow": "schema_toucher_ui",
+    "RunCommandWindow": "run_command",
 }
 
 
@@ -27,4 +28,5 @@ __all__ = [
     "TextEditorWindow", "TextToucherWindow", "BackupsWindow", "HistoryWindow", "SettingsWindow",
     "apply_patch_text", "create_text_file", "file_name", "project_patch_diff", "validate_target",
     "SchemaToucherWindow",
+    "RunCommandWindow",
 ]

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "projectmapper": {
+      "type": "stdio",
+      "command": "C:\\Jacob\\_AppDesign\\_SANDBOX\\ProjectMapper\\.venv\\Scripts\\projectmapper-mcp.exe",
+      "args": [
+        "--root", "C:\\Jacob\\_AppDesign\\_SANDBOX\\ProjectMapper"
+      ]
+    }
+  }
+}

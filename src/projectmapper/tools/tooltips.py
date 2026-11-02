@@ -121,4 +121,8 @@ TOOLTIPS = {
     "st.next": "Show the next record in the browse view.",
     "st.filter": "Filter browse records by the named field and value.",
     "st.clear": "Clear the filter and show all records.",
+    "run_command.command": "Enter a PowerShell command to run in this folder. Use Up/Down to navigate history.",
+    "run_command.run": "Run the entered command in the folder and stream its output below.",
+    "run_command.kill": "Stop the running command.",
+    "run_command.clear": "Clear the output log.",
 }

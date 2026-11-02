@@ -28,9 +28,11 @@ _SCHEMA_TEMPLATE = json.dumps({
             "type": "array",
             "label": "Context Refs",
             "description": (
-                "Pointers to related entries: bare timestamp for same spine, "
-                "or 'spine-name::timestamp' for cross-spine. "
-                "An agent reading this entry should fetch these to get full context."
+                "Pointers to related entries. "
+                "Bare timestamp = same spine. 'spine-name::timestamp' = cross-spine. "
+                "Example value: "
+                "[\"2026-11-02T00:00:05.000000+00:00\", "
+                "\"other-spine::2026-11-01T12:00:00.000000+00:00\"]"
             )
         },
         "context_summary": {
@@ -39,8 +41,9 @@ _SCHEMA_TEMPLATE = json.dumps({
             "label": "Context Summary",
             "description": (
                 "Prewritten narrative explaining what the context_refs contribute "
-                "to understanding this entry. Saves an agent from having to synthesize "
-                "the refs cold. Update when refs change."
+                "to understanding this entry — so an agent doesn't have to synthesize them cold. "
+                "Example: \"See decision-log entry for why this approach was chosen "
+                "and the review entry for its known limitations.\""
             )
         }
     }

@@ -146,6 +146,7 @@ class SchemaToucherWindow(ToolWindowMixin):
         self._schema_key: str | None = None
         self._schema_def: dict | None = None
         self._field_widgets: dict = {}
+        self._ctx_panels: dict = {}   # key → {frame, text, mode_var, btn, expanded}
         self._entry_count = 0
         self._browse_index = -1
         self._browse_mode = tk.StringVar(value=_BROWSE_SINGLE)
@@ -659,6 +660,7 @@ class SchemaToucherWindow(ToolWindowMixin):
         for w in self._form_inner.winfo_children():
             w.destroy()
         self._field_widgets.clear()
+        self._ctx_panels.clear()
         if not self._schema_def:
             tk.Label(self._form_inner,
                      text="No schema loaded.",
@@ -669,17 +671,21 @@ class SchemaToucherWindow(ToolWindowMixin):
         c = self.colors
         props = self._schema_def.get("properties", {})
         self._form_inner.columnconfigure(1, weight=1)
-        for row, (key, prop) in enumerate(props.items()):
-            label = prop.get("label", key)
-            self.label(self._form_inner, text=label, panel=True).grid(
-                row=row, column=0, sticky="nw", padx=(20, 6), pady=8)
+        grid_row = 0
+        for key, prop in props.items():
+            label_text = prop.get("label", key)
+            self.label(self._form_inner, text=label_text, panel=True).grid(
+                row=grid_row, column=0, sticky="nw", padx=(20, 6), pady=8)
             w = _field_widget(self._form_inner, prop, c)
-            w.grid(row=row, column=1, sticky="ew", padx=(0, 20), pady=8)
+            w.grid(row=grid_row, column=1, sticky="ew", padx=(0, 20), pady=8)
             self._field_widgets[key] = w
             if hasattr(w, "_var") and w._var is not None:
                 w._var.trace_add("write", self._on_field_changed)
             elif isinstance(w, tk.Text):
                 w.bind("<<Modified>>", self._on_text_field_changed)
+            grid_row += 1
+            if key == "context_refs" and prop.get("type") == "array":
+                grid_row = self._add_context_panel(key, w, grid_row)
         self._update_preview()
 
     def _on_field_changed(self, *_):
@@ -690,6 +696,160 @@ class SchemaToucherWindow(ToolWindowMixin):
         if not self._syncing and event.widget.edit_modified():
             event.widget.edit_modified(False)
             self._update_preview()
+            for key, panel in self._ctx_panels.items():
+                if self._field_widgets.get(key) is event.widget:
+                    self._update_ctx_badge(key)
+                    if panel["expanded"]:
+                        self._refresh_context_panel(key)
+                    break
+
+    # ── Context-ref panel ─────────────────────────────────────────────────
+
+    def _update_ctx_badge(self, key: str):
+        panel = self._ctx_panels.get(key)
+        if not panel:
+            return
+        refs_widget = self._field_widgets.get(key)
+        if not isinstance(refs_widget, tk.Text):
+            return
+        raw = refs_widget.get("1.0", "end-1c").strip()
+        try:
+            refs = json.loads(raw) if raw else []
+            n = len(refs) if isinstance(refs, list) else 0
+        except json.JSONDecodeError:
+            n = 0
+        arrow = "▼" if panel["expanded"] else "▶"
+        panel["btn"].configure(
+            text=f"{arrow} Show context  ({n} ref{'s' if n != 1 else ''})"
+            if not panel["expanded"] else
+            f"▼ Hide context  ({n} ref{'s' if n != 1 else ''})")
+
+    def _add_context_panel(self, key: str, _refs_widget: tk.Text, next_row: int) -> int:
+        """Add a toggle button + collapsible resolved-refs panel; return updated row."""
+        c = self.colors
+        mode_var = tk.StringVar(value="summary")
+
+        btn = tk.Button(
+            self._form_inner, text="▶ Show context",
+            font=("Arial", 8), relief="flat", cursor="hand2",
+            bg=c["panel_bg"], fg=c["accent"],
+            activebackground=c["panel_bg"], activeforeground=c["text"],
+            bd=0, padx=4, pady=2,
+            command=lambda: self._toggle_context_panel(key))
+        btn.grid(row=next_row, column=1, sticky="w", padx=(0, 20), pady=(0, 4))
+
+        panel_frame = tk.Frame(self._form_inner, bg=c["panel_alt_bg"])
+
+        # Mode toggle bar inside panel
+        toggle_bar = tk.Frame(panel_frame, bg=c["heading_bg"])
+        toggle_bar.pack(fill="x")
+        for label_text, val in (("Summary", "summary"), ("Raw", "raw")):
+            tk.Radiobutton(
+                toggle_bar, text=label_text, variable=mode_var, value=val,
+                font=("Arial", 8), bg=c["heading_bg"], fg=c["text"],
+                selectcolor=c["heading_bg"], activebackground=c["heading_bg"],
+                command=lambda k=key: self._refresh_context_panel(k),
+            ).pack(side="left", padx=6, pady=2)
+
+        ctx_text = tk.Text(
+            panel_frame, height=10, wrap="word", font=("Consolas", 9),
+            bg=c["log_bg"], fg=c["text"],
+            insertbackground=c["text"], selectbackground=c["selection"],
+            relief="flat", padx=6, pady=4, state="disabled")
+        ctx_text.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+
+        self._ctx_panels[key] = {
+            "frame": panel_frame,
+            "text": ctx_text,
+            "mode_var": mode_var,
+            "btn": btn,
+            "expanded": False,
+        }
+        return next_row + 1
+
+    def _toggle_context_panel(self, key: str):
+        panel = self._ctx_panels.get(key)
+        if not panel:
+            return
+        if panel["expanded"]:
+            panel["frame"].grid_remove()
+            panel["btn"].configure(text="▶ Show context")
+            panel["expanded"] = False
+        else:
+            # Determine which grid row to place the panel in — one below the button
+            btn_info = panel["btn"].grid_info()
+            panel_row = int(btn_info["row"]) + 1
+            panel["frame"].grid(row=panel_row, column=0, columnspan=2,
+                                sticky="ew", padx=20, pady=(0, 8))
+            panel["btn"].configure(text="▼ Hide context")
+            panel["expanded"] = True
+            self._refresh_context_panel(key)
+
+    def _refresh_context_panel(self, key: str):
+        panel = self._ctx_panels.get(key)
+        if not panel or not panel["expanded"]:
+            return
+        refs_widget = self._field_widgets.get(key)
+        if not isinstance(refs_widget, tk.Text):
+            return
+
+        raw = refs_widget.get("1.0", "end-1c").strip()
+        try:
+            refs = json.loads(raw) if raw else []
+            if not isinstance(refs, list):
+                refs = []
+        except json.JSONDecodeError:
+            refs = []
+
+        panel["btn"].configure(
+            text=f"▼ Hide context  ({len(refs)} ref{'s' if len(refs) != 1 else ''})")
+
+        ctx_text = panel["text"]
+        ctx_text.configure(state="normal")
+        ctx_text.delete("1.0", "end")
+
+        if not refs:
+            ctx_text.insert("end", "(no refs)")
+            ctx_text.configure(state="disabled")
+            return
+
+        mode = panel["mode_var"].get()
+        entries_by_ts: dict = {}
+        if self._spine:
+            try:
+                for e in self._spine.read_entries():
+                    ts = e.get("ts", "")
+                    if ts:
+                        entries_by_ts[ts] = e
+            except SpineError:
+                pass
+
+        for ref in refs:
+            ref = str(ref)
+            cross_spine = "::" in ref
+            if cross_spine:
+                _spine_name, ts = ref.split("::", 1)
+            else:
+                ts = ref
+
+            ctx_text.insert("end", f"── {ref} ", "ref_hdr")
+            entry = entries_by_ts.get(ts) if not cross_spine else None
+            if entry is None:
+                notice = "(cross-spine — open that spine to resolve)" if cross_spine else "(not found in loaded spine)"
+                ctx_text.insert("end", notice + "\n\n", "dim")
+                continue
+
+            ctx_text.insert("end", "\n")
+            if mode == "summary":
+                ctx_text.insert("end", self._format_entry_readable(entry) + "\n\n")
+            else:
+                ctx_text.insert("end", json.dumps(entry, indent=2) + "\n\n")
+
+        ctx_text.tag_configure("ref_hdr", foreground=self.colors["accent"],
+                               font=("Consolas", 9, "bold"))
+        ctx_text.tag_configure("dim", foreground=self.colors["muted_text"],
+                               font=("Consolas", 9))
+        ctx_text.configure(state="disabled")
 
     def _read_form_data(self) -> dict:
         if not self._schema_def:

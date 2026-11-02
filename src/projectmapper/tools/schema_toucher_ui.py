@@ -15,6 +15,37 @@ _BROWSE_ALL = "all"
 _BROWSE_SINGLE = "single"
 _BROWSE_RAW = "raw"
 
+_SCHEMA_TEMPLATE = json.dumps({
+    "id": "my-schema",
+    "version": 1,
+    "properties": {
+        "field_name": {
+            "type": "string",
+            "label": "Field Label",
+            "description": "What this field holds"
+        },
+        "context_refs": {
+            "type": "array",
+            "label": "Context Refs",
+            "description": (
+                "Pointers to related entries: bare timestamp for same spine, "
+                "or 'spine-name::timestamp' for cross-spine. "
+                "An agent reading this entry should fetch these to get full context."
+            )
+        },
+        "context_summary": {
+            "type": "string",
+            "format": "textarea",
+            "label": "Context Summary",
+            "description": (
+                "Prewritten narrative explaining what the context_refs contribute "
+                "to understanding this entry. Saves an agent from having to synthesize "
+                "the refs cold. Update when refs change."
+            )
+        }
+    }
+}, indent=2)
+
 
 def _is_textarea(prop: dict) -> bool:
     return prop.get("type", "string") == "string" and prop.get("format") == "textarea"
@@ -126,6 +157,9 @@ class SchemaToucherWindow(ToolWindowMixin):
         self.top.protocol("WM_DELETE_WINDOW", self.close)
         self._build_ui()
         self.top.update_idletasks()
+        self._schema_editor.insert("1.0", _SCHEMA_TEMPLATE)
+        self._schema_editor.edit_modified(False)
+        self._schema_editor_status.set("Starter template — edit fields then Register")
 
     def close(self):
         self.top.destroy()

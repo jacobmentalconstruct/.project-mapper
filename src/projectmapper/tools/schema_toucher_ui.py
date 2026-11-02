@@ -425,7 +425,7 @@ class SchemaToucherWindow(ToolWindowMixin):
         stem = name[:-6] if name.endswith(".jsonl") else name
         filename = stem + ".jsonl"
 
-        suggested = self._default_folder / ".spine"
+        suggested = self._default_folder / "_spine"
         suggested.mkdir(parents=True, exist_ok=True)
 
         folder = filedialog.askdirectory(
@@ -444,7 +444,7 @@ class SchemaToucherWindow(ToolWindowMixin):
         self._switch_spine(spine)
 
     def _open_spine(self):
-        suggested = str(self._default_folder / ".spine")
+        suggested = str(self._default_folder / "_spine")
         path = filedialog.askopenfilename(
             parent=self.top,
             initialdir=suggested,

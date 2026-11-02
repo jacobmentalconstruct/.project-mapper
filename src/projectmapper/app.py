@@ -833,7 +833,7 @@ class ProjectMapperApp:
         for tab_name in ("Snapshot", "Git"):
             btn = tk.Label(
                 tab_bar, text=f"  {tab_name}  ", cursor="hand2",
-                bg=THEME["heading_bg"], fg=THEME["muted_text"],
+                bg=THEME["success"], fg=THEME["text"],
                 font=("Arial", 9), padx=10, pady=4,
             )
             btn.pack(side=tk.LEFT, padx=(2, 0), pady=(2, 0))
@@ -2074,7 +2074,7 @@ class ProjectMapperApp:
             if tab_name == name:
                 btn.config(bg=THEME["panel_bg"], fg=THEME["text"], font=("Arial", 9, "bold"))
             else:
-                btn.config(bg=THEME["heading_bg"], fg=THEME["muted_text"], font=("Arial", 9))
+                btn.config(bg=THEME["success"], fg=THEME["text"], font=("Arial", 9))
         self._active_toolbar_tab = name
         if name == "Git":
             self._git_refresh_status()

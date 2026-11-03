@@ -130,7 +130,10 @@ class InferenceWindow(ToolWindowMixin):
         # Chain linkage.
         self._chain_parent = chain_parent
         self._chain_child: "InferenceWindow | None" = None
+        self._chain_target: "InferenceWindow | None" = None  # routing override; None = follow _chain_child
         self._chain_order = chain_order  # fixed at spawn
+        # Stop flag — only the root's value is read; reset before each run.
+        self._chain_stop: bool = False
 
         self.top = tk.Toplevel(app.root)
         self.configure_tool_window(
@@ -738,15 +741,20 @@ class InferenceWindow(ToolWindowMixin):
         queue.append(self)
 
         if self._cascade_var.get():
-            child: InferenceWindow | None = self._chain_child
+            visited: set[int] = {n._step for n in queue}
+            child: InferenceWindow | None = self._chain_target or self._chain_child
             while child is not None and child.top.winfo_exists():
+                if child._step in visited:
+                    break  # loop detected — stop here
+                visited.add(child._step)
                 queue.append(child)
-                child = child._chain_child
+                child = child._chain_target or child._chain_child
 
         # Descendant invalidation happens only after a successful commit
         # (see _invalidate_descendants), not here.
 
         # Lock the chain and disable Run on all nodes.
+        root._chain_stop = False
         root._chain_busy = True
         for n in self._all_chain_nodes():
             if n.top.winfo_exists():
@@ -755,7 +763,8 @@ class InferenceWindow(ToolWindowMixin):
         self._run_queue(queue, 0)
 
     def _run_queue(self, queue: list, index: int):
-        if index >= len(queue):
+        root = self._chain_root()
+        if index >= len(queue) or root._chain_stop:
             self._unlock_chain()
             return
         node = queue[index]

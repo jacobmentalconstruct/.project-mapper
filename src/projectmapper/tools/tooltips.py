@@ -146,6 +146,8 @@ TOOLTIPS = {
     "nav.add_step": "Append a new step to the end of the chain.",
     "nav.run_step": "Run the selected step, executing any unrun ancestors first.",
     "nav.run_to_end": "Run the selected step and cascade through all subsequent steps.",
+    "nav.stop": "Stop the cascade after the current step finishes.",
+    "nav.route": "Choose which step this step's output routes to next. Set to a prior step to create a loop.",
     "inference.chain": "When checked, the next submit passes the last response into a new window.",
     "inference.chain_order": "Before: previous response comes first. After: new prompt comes first.",
 }

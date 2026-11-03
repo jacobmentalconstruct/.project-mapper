@@ -1,4 +1,4 @@
-"""Chain Navigator — lightweight read-only panel over an InferenceWindow chain."""
+"""Chain Navigator — panel over an InferenceWindow chain."""
 
 import tkinter as tk
 from tkinter import ttk
@@ -11,6 +11,7 @@ else:
 __all__ = ["ChainNavigatorWindow"]
 
 _POLL_MS = 350
+_END_LABEL = "— End —"
 
 
 class ChainNavigatorWindow(ToolWindowMixin):
@@ -26,13 +27,14 @@ class ChainNavigatorWindow(ToolWindowMixin):
         self._root = chain_root  # root InferenceWindow — never changes
 
         self.top = tk.Toplevel(app.root)
-        self.configure_tool_window("Chain Navigator", "360x440", (300, 320))
+        self.configure_tool_window("Chain Navigator", "360x500", (300, 320))
         self.top.protocol("WM_DELETE_WINDOW", self.close)
         self.top.columnconfigure(0, weight=1)
         self.top.rowconfigure(1, weight=1)
 
         self._nodes: list = []
         self._last_rows: list = []
+        self._route_var = tk.StringVar(value=_END_LABEL)
         self._build_ui()
         self._poll()
 
@@ -70,15 +72,30 @@ class ChainNavigatorWindow(ToolWindowMixin):
         self._lb.configure(yscrollcommand=sb.set)
         self._lb.bind("<<ListboxSelect>>", self._on_select)
 
+        # routing row
+        route_row = self.frame(self.top)
+        route_row.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 2))
+        self.label(route_row, text="Selected routes to →", panel=True,
+                   font=("Arial", 9)).pack(side=tk.LEFT, padx=4)
+        self._route_menu = ttk.Combobox(
+            route_row, textvariable=self._route_var,
+            state="readonly", width=18, font=("Arial", 9),
+        )
+        self._route_menu.pack(side=tk.LEFT, padx=4)
+        self._route_menu.bind("<<ComboboxSelected>>", self._on_route_change)
+
         # actions
         act = self.frame(self.top)
-        act.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 4))
+        act.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 4))
         self._run_btn = self.button(act, "Run Step", self._run_selected,
                                     "success", tooltip_id="nav.run_step")
         self._run_btn.pack(side=tk.LEFT, padx=4, pady=4)
         self._cascade_btn = self.button(act, "Run → End", self._cascade_from_selected,
                                         tooltip_id="nav.run_to_end")
         self._cascade_btn.pack(side=tk.LEFT, padx=2, pady=4)
+        self._stop_btn = self.button(act, "Stop", self._stop_chain, "error",
+                                     tooltip_id="nav.stop")
+        self._stop_btn.pack(side=tk.RIGHT, padx=4, pady=4)
 
         # status bar
         self._status_var = tk.StringVar(value="")
@@ -86,7 +103,7 @@ class ChainNavigatorWindow(ToolWindowMixin):
             self.top, textvariable=self._status_var,
             bg=c["status_bg"], fg=c["status_text"],
             anchor="w", padx=8, font=("Arial", 9),
-        ).grid(row=3, column=0, sticky="ew")
+        ).grid(row=4, column=0, sticky="ew")
 
     # ── polling ───────────────────────────────────────────────────────────
 
@@ -133,18 +150,35 @@ class ChainNavigatorWindow(ToolWindowMixin):
         if prev_idx is not None and prev_idx < len(nodes):
             self._lb.selection_set(prev_idx)
 
+        # Update route dropdown choices.
+        step_labels = [f"Step {n._step}" for n in nodes] + [_END_LABEL]
+        if list(self._route_menu["values"]) != step_labels:
+            self._route_menu["values"] = step_labels
+        self._sync_route_display()
+
         chain_busy = self._root._chain_busy
         self.set_button_enabled(self._run_btn, not chain_busy, "success")
         self.set_button_enabled(self._cascade_btn, not chain_busy, "secondary")
+        self.set_button_enabled(self._stop_btn, chain_busy, "error")
 
+        running_count = sum(1 for n in nodes if n._stream is not None)
         done = sum(1 for n in nodes if n._last_response.strip())
-        running_count = sum(1 for n in nodes
-                            if n._active_thread and n._active_thread.is_alive())
         total = len(nodes)
         if running_count:
             self._status_var.set(f"Running…  {done}/{total} done")
         else:
             self._status_var.set(f"{done}/{total} steps done")
+
+    def _sync_route_display(self):
+        """Update route dropdown to reflect the selected node's current target."""
+        node = self._selected_node()
+        if node is None:
+            return
+        target = node._chain_target
+        if target is None or not target.top.winfo_exists():
+            self._route_var.set(_END_LABEL)
+        else:
+            self._route_var.set(f"Step {target._step}")
 
     # ── selection ─────────────────────────────────────────────────────────
 
@@ -161,6 +195,27 @@ class ChainNavigatorWindow(ToolWindowMixin):
             node.top.deiconify()
             node.top.lift()
             node.top.focus_force()
+        self._sync_route_display()
+
+    # ── routing ───────────────────────────────────────────────────────────
+
+    def _on_route_change(self, _ev=None):
+        node = self._selected_node()
+        if node is None:
+            return
+        label = self._route_var.get()
+        if label == _END_LABEL:
+            node._chain_target = None
+            return
+        # Find the target node by step number.
+        try:
+            step_num = int(label.split()[-1])
+        except (ValueError, IndexError):
+            return
+        for n in self._nodes:
+            if n._step == step_num:
+                node._chain_target = n
+                return
 
     # ── actions ───────────────────────────────────────────────────────────
 
@@ -190,6 +245,16 @@ class ChainNavigatorWindow(ToolWindowMixin):
             node._cascade_var.set(True)
             node._run()
 
+    def _stop_chain(self):
+        """Signal the running cascade to stop after the current step."""
+        root = self._root
+        root._chain_stop = True
+        # Also cancel any active stream on a running node.
+        for node in self._root._all_chain_nodes():
+            if node._stream is not None:
+                node._stream.cancel()
+                break
+
     # ── lifecycle ─────────────────────────────────────────────────────────
 
     def close(self):
@@ -200,7 +265,7 @@ class ChainNavigatorWindow(ToolWindowMixin):
 
 
 def _node_status(node) -> str:
-    if node._active_thread and node._active_thread.is_alive():
+    if node._stream is not None:
         return "running"
     if node._last_response.strip():
         return "done"

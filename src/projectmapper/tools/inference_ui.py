@@ -3,7 +3,7 @@
 import json
 import threading
 import tkinter as tk
-from tkinter import scrolledtext, ttk
+from tkinter import messagebox, scrolledtext, ttk
 from pathlib import Path
 
 if __package__:
@@ -62,6 +62,7 @@ class InferenceWindow(ToolWindowMixin):
         self._active_thread: threading.Thread | None = None
         self._context_path = context_path
         self._config = _load_inference_config()
+        self._last_response = ""
 
         self.top = tk.Toplevel(app.root)
         self.configure_tool_window("Inference — Ollama", "820x680", (600, 480))
@@ -242,6 +243,32 @@ class InferenceWindow(ToolWindowMixin):
         )
         self._stop_btn.pack(side=tk.LEFT, padx=2, pady=4)
 
+        # ── chain controls ────────────────────────────────────────────────────
+        self._chain_var = tk.BooleanVar(value=False)
+        chain_cb = self.checkbutton(
+            btn_row, "Chain", self._chain_var,
+            command=self._toggle_chain_controls,
+            tooltip_id="inference.chain",
+        )
+        chain_cb.pack(side=tk.LEFT, padx=(12, 2), pady=4)
+
+        self._chain_controls = tk.Frame(btn_row, bg=self.colors["panel_bg"])
+        self._chain_controls.pack(side=tk.LEFT, padx=2, pady=4)
+        self._chain_order = tk.StringVar(value="after")
+        for value, label in (("before", "Before"), ("after", "After")):
+            rb = tk.Radiobutton(
+                self._chain_controls, text=label, value=value,
+                variable=self._chain_order,
+                bg=self.colors["panel_bg"], fg=self.colors["muted_text"],
+                selectcolor=self.colors["tree_bg"],
+                activebackground=self.colors["panel_bg"],
+                activeforeground=self.colors["text"],
+                font=("Arial", 9),
+            )
+            attach_tooltip(rb, "inference.chain_order", self.colors)
+            rb.pack(side=tk.LEFT, padx=2)
+        self._chain_controls.pack_forget()  # hidden until chain checked
+
         self.button(
             btn_row, "Clear", self._clear_all,
             tooltip_id="inference.clear",
@@ -409,6 +436,12 @@ class InferenceWindow(ToolWindowMixin):
         except (ValueError, TypeError):
             return None
 
+    def _toggle_chain_controls(self):
+        if self._chain_var.get():
+            self._chain_controls.pack(side=tk.LEFT, padx=2, pady=4)
+        else:
+            self._chain_controls.pack_forget()
+
     def _run(self):
         model = self._model_var.get().strip()
         prompt = self._prompt_text.get("1.0", tk.END).strip()
@@ -418,7 +451,23 @@ class InferenceWindow(ToolWindowMixin):
         if self._active_thread and self._active_thread.is_alive():
             return
 
+        # Chain logic — intercept before the actual submit.
+        if self._chain_var.get():
+            if not self._last_response:
+                go = messagebox.askyesno(
+                    "No previous response",
+                    "Chain is on but there is no previous response yet.\n\nSubmit the prompt as-is?",
+                    parent=self.top,
+                )
+                if not go:
+                    return
+                # Fall through and run normally (no chaining material yet).
+            else:
+                self._spawn_chain_window(model, prompt)
+                return
+
         self._stop_event.clear()
+        self._last_response = ""
         self.set_button_enabled(self._run_btn, False, "success")
         self.set_button_enabled(self._stop_btn, True, "danger")
         self._status_bar_var.set(f"Running · {model}…")
@@ -439,6 +488,7 @@ class InferenceWindow(ToolWindowMixin):
         self._stop_event.set()
 
     def _on_token(self, token: str):
+        self._last_response += token
         self.top.after(0, lambda: self._append_token(token))
 
     def _append_token(self, token: str):
@@ -487,6 +537,20 @@ class InferenceWindow(ToolWindowMixin):
         self._prompt_text.delete("1.0", tk.END)
         ToolWindowMixin.show_text(self._response_box, "")
         self._status_bar_var.set("Ready.")
+
+    # ── chain ─────────────────────────────────────────────────────────────────
+
+    def _spawn_chain_window(self, model: str, prompt: str):
+        sep = "\n\n---\n\n"
+        order = self._chain_order.get()
+        if order == "before":
+            combined = self._last_response.strip() + sep + prompt
+        else:
+            combined = prompt + sep + self._last_response.strip()
+        win = InferenceWindow(self.app)
+        win._model_var.set(model)
+        win._prompt_text.delete("1.0", tk.END)
+        win._prompt_text.insert("1.0", combined)
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 

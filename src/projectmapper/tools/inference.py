@@ -7,9 +7,9 @@ import urllib.request
 import urllib.error
 from typing import Callable
 
-__all__ = ["OllamaClient"]
+__all__ = ["OllamaClient", "DEFAULT_ENDPOINT"]
 
-_DEFAULT_ENDPOINT = "http://localhost:11434"
+DEFAULT_ENDPOINT = "http://localhost:11434"
 _REQUEST_TIMEOUT = 10
 
 
@@ -20,7 +20,7 @@ class OllamaClient:
     from a background thread and posts results back to the GUI queue itself.
     """
 
-    def __init__(self, endpoint: str = _DEFAULT_ENDPOINT):
+    def __init__(self, endpoint: str = DEFAULT_ENDPOINT):
         self.endpoint = endpoint.rstrip("/")
 
     # ── connectivity ─────────────────────────────────────────────────────────

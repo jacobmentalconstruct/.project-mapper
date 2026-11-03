@@ -17,6 +17,9 @@ TARGET_KEYS = ("path", "root", "folder", "from", "to", "generation", "scope")
 class Dispatcher:
     def __init__(self, *, history_limit=1000, operation_limit=4096):
         self._handlers = {}
+        # Long-running actions that never touch project state (network inference, shell
+        # commands) run on their own daemon threads so they cannot hold up the serial worker.
+        self._background = set()
         self._operations = {}
         self._requests = {}
         self._listeners = {}
@@ -33,10 +36,22 @@ class Dispatcher:
         self.on_observer_error = None  # optional hook(trace), e.g. to record an internal problem
         self._local = threading.local()
 
-    def register(self, name, handler):
+    def register(self, name, handler, *, background=False):
         if name in self._handlers:
             raise ValueError(f"Action already registered: {name}")
         self._handlers[name] = handler
+        if background:
+            self._background.add(name)
+
+    def _start(self, operation, continuation=None):
+        """Caller holds the lock and has checked the dispatcher is open."""
+        if operation["request"].action in self._background:
+            threading.Thread(target=self._run, args=(operation, continuation), daemon=True,
+                             name="projectmapper-background").start()
+        elif continuation is None:
+            self._worker.submit(self._run, operation)
+        else:
+            self._worker.submit(self._run, operation, continuation)
 
     def actions(self):
         return tuple(sorted(self._handlers))
@@ -61,7 +76,9 @@ class Dispatcher:
             self._sequence += 1
             request = operation["request"]
             event = Event(self._sequence, operation["id"], request.action, request.origin, kind, copy.deepcopy(payload or {}))
-            self._events.append(event)
+            # Streamed output goes to live listeners only; replaying it would evict real events.
+            if kind != "output":
+                self._events.append(event)
             self._delivery.append((event, tuple(self._listeners.values())))
             if self._delivering:
                 return
@@ -126,7 +143,7 @@ class Dispatcher:
         with self._lock:
             closed = self._closed
             if not closed:
-                self._worker.submit(self._run, operation)
+                self._start(operation)
         if closed:
             self._finish(operation, "cancelled", error={"code": "closed", "message": "Application closed."})
         return operation_id
@@ -183,11 +200,17 @@ class Dispatcher:
                 raise ActionError("not_found", "Operation was not found.")
             return copy.deepcopy(self._operations[operation_id]["result"])
 
+    def settled(self, operation_id):
+        """True once the operation has finished or is waiting for approval."""
+        with self._lock:
+            operation = self._operations[operation_id]
+            return operation["settled"] and operation["result"].status in TERMINAL | {"awaiting_approval"}
+
     def wait(self, operation_id, timeout=30):
         if getattr(self._local, "in_listener", False):
             raise ActionError("reentrant", "Event listeners must not wait on actions; queue work instead.")
         with self._changed:
-            self._changed.wait_for(lambda: self._operations[operation_id]["settled"] and self.get(operation_id).status in TERMINAL | {"awaiting_approval"}, timeout)
+            self._changed.wait_for(lambda: self.settled(operation_id), timeout)
             return self.get(operation_id)
 
     def execute(self, request, timeout=30):
@@ -225,7 +248,7 @@ class Dispatcher:
             else:
                 operation["settled"] = False
                 operation["result"] = Result(operation_id, operation["request"].action, "queued")
-                self._worker.submit(self._run, operation, plan.execute)
+                self._start(operation, plan.execute)
         if denied:
             # Refusal is already a complete decision. Do not queue a no-op continuation
             # behind the single worker: the trusted UI can wait for this result directly.

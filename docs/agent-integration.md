@@ -62,10 +62,10 @@ The server exposes these sorted, allow-listed tools:
 `patch.load`, `patch.result`, `patch.save`, `patch.schema`, `patch.validate`,
 `project.scan`, `project_patch.add_entry`, `project_patch.apply`,
 `project_patch.validate`, `selection.set`, `snapshot.compile`, `snapshot.export`,
-`snapshot.require`, `state.get`, `text.find`, `text.open`, `text.replace`, and
-`text.save`. They cover project state, selection and exclusions, snapshots, file and
-patch operations, structural transforms and content-free history. The server also
-exposes:
+`snapshot.require`, `spine.append`, `spine.list`, `spine.read`, `state.get`, `text.find`,
+`text.open`, `text.replace`, and `text.save`. They cover project state, selection and
+exclusions, snapshots, file and patch operations, structural transforms, spines and
+content-free history. The server also exposes:
 
 - `projectmapper://tree` for the current tree scan.
 - `projectmapper://snapshot/{projection}` for a compiled `tree`, `filedump`, `combined`
@@ -77,6 +77,28 @@ single-use `plan_id` only when every operation is valid. `project_patch.apply` a
 that exact plan. Version 2 includes `patch`, `create`, `mkdir`, `move`/`move_dir`, `delete`
 and `delete_dir` operations. For one file, use `text.open`, then `patch.validate`, then `patch.save`, or use
 `text.save` with the SHA-256 returned by `text.open`. `file.create` never overwrites.
+
+## Spines as shared memory
+
+Spines are SchemaTOUCHER's append-only `.jsonl` journals: schema records followed by
+entries that use them. Agents can treat them as structured, human-readable memory:
+
+- `spine.list` finds spines in the project (folders such as `.git`, `.venv` and
+  `node_modules` are skipped; gitignored folders are included).
+- `spine.read` returns a spine's schemas and its entries, each with a 0-based `index`.
+  Filter with `schema` and page with `start` and `limit` (1–1000, default 200).
+- `spine.append` adds one entry under a schema that is already registered in the file.
+  The data is checked against the schema's `properties`, `required` fields, `type` and
+  `enum` values. Existing entries are never changed, and agents cannot register schemas;
+  create schemas in SchemaTOUCHER.
+
+Appends follow **Ask before non-destructive project transforms**: off by default, so
+appends run without a prompt; turn it on to approve each entry in the approval window.
+Agents may append to spines anywhere in the project and in the sidecar's
+`.project-mapper/spines/` folder, but not elsewhere in ProjectMapper's own folders.
+
+Running shell commands and local model inference are desktop tools and are not exposed
+to agents.
 
 ## CLI examples
 

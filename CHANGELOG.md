@@ -8,8 +8,23 @@ All notable changes to ProjectMapper. Versions follow [PEP 440](https://peps.pyt
 
 - **Hover help for every control** in every window, from one reviewed text registry
   (`tools/tooltips.py`). A test fails if a control has no registered help.
+- **Run Command** and **Inference** windows, with chained inference steps and a Chain
+  Navigator.
+- **Spines for agents**: `spine.list`, `spine.read` and `spine.append` over CLI/MCP.
+  Appends are checked against the entry's schema and follow the non-destructive
+  transform approval setting.
+- Shell commands (`command.run`) and Ollama inference (`inference.models`,
+  `inference.model_info`, `inference.generate`) are now shared actions: they appear in
+  History, can be cancelled, and run on a background lane so they never hold up other
+  operations. They are not exposed to agents.
 
 ### Fixed
+
+- **The desktop no longer freezes during slower synchronous operations** (patch
+  validation, backups, saves). The windows keep painting and stay responsive to the window
+  manager; input is held until the operation returns, so nothing can be clicked twice.
+- First-time setup now installs the package into the sidecar's virtual environment, so the
+  `projectmapper-cli` and `projectmapper-mcp` commands exist after `setup_env`.
 
 - **Project changesets may name an existing file by the path it has after an earlier
   move.** Move then patch, delete or move again, and operations on the contents of a moved

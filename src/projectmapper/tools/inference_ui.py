@@ -3,7 +3,7 @@
 import json
 import threading
 import tkinter as tk
-from tkinter import messagebox, scrolledtext, ttk
+from tkinter import scrolledtext, ttk
 from pathlib import Path
 
 if __package__:
@@ -72,9 +72,12 @@ class InferenceWindow(ToolWindowMixin):
         self._context_path = context_path
         self._config = _load_inference_config()
         self._last_response = ""
+        self._ran = False
+        self._on_finished = None
 
         # Chain linkage
         self._chain_parent = chain_parent
+        self._chain_child: "InferenceWindow | None" = None
         self._chain_order = chain_order  # "before" or "after" — fixed at spawn
 
         self.top = tk.Toplevel(app.root)
@@ -476,10 +479,47 @@ class InferenceWindow(ToolWindowMixin):
             self._chain_controls.pack_forget()
 
     def _open_chain_child(self):
+        if self._chain_child is not None and self._chain_child.top.winfo_exists():
+            self._chain_child.top.lift()
+            return
         order = self._chain_order_var.get()
         child = InferenceWindow(self.app, chain_parent=self, chain_order=order)
+        self._chain_child = child
         child.top.lift()
         child.top.focus_force()
+
+    def _descendants(self):
+        node = self._chain_child
+        while node is not None and node.top.winfo_exists():
+            yield node
+            node = node._chain_child
+
+    def _reset_descendants(self):
+        for node in self._descendants():
+            node._ran = False
+            node._last_response = ""
+            ToolWindowMixin.show_text(node._response_box, "")
+
+    def _compose_prompt(self) -> str | None:
+        own = self._prompt_text.get("1.0", tk.END).strip()
+        if self._chain_parent is None:
+            return own
+        parent_response = self._chain_parent._last_response.strip()
+        if not parent_response:
+            return None
+        sep = "\n\n---\n\n"
+        if self._chain_order == "before":
+            return parent_response + sep + own
+        return own + sep + parent_response
+
+    def _lineage(self):
+        nodes = []
+        node = self
+        while node is not None:
+            nodes.append(node)
+            node = node._chain_parent
+        nodes.reverse()
+        return nodes
 
     # ── run / stop ────────────────────────────────────────────────────────────
 
@@ -503,43 +543,44 @@ class InferenceWindow(ToolWindowMixin):
             return None
 
     def _run(self):
-        model = self._model_var.get().strip()
-        prompt = self._prompt_text.get("1.0", tk.END).strip()
-        if not model or not prompt:
-            self._status_bar_var.set("Choose a model and enter a prompt first.")
+        lineage = self._lineage()
+        if any(n._active_thread and n._active_thread.is_alive() for n in lineage):
             return
-        if self._active_thread and self._active_thread.is_alive():
-            return
-
-        # If this step has a parent, inject the parent's response.
-        if self._chain_parent is not None:
-            parent_response = self._chain_parent._last_response.strip()
-            if not parent_response:
-                go = messagebox.askyesno(
-                    "Parent step not complete",
-                    f"Step {self._step - 1} has no response yet.\n\n"
-                    "Submit this prompt on its own without injecting the parent response?",
-                    parent=self.top,
-                )
-                if not go:
-                    return
-                # Run with just the user's prompt.
-            else:
-                sep = "\n\n---\n\n"
-                if self._chain_order == "before":
-                    prompt = parent_response + sep + prompt
-                else:
-                    prompt = prompt + sep + parent_response
-
-        # If chain is checked on this step, open the next step on submit.
+        queue = [n for n in lineage if n is self or not n._ran]
         if self._chain_var.get():
             self._open_chain_child()
+        self._run_queue(queue, 0)
 
+    def _run_queue(self, queue, index):
+        if index >= len(queue):
+            return
+        node = queue[index]
+        node._execute(lambda ok: self._run_queue(queue, index + 1) if ok else None)
+
+    def _execute(self, on_finished):
+        model = self._model_var.get().strip()
+        prompt = self._compose_prompt()
+        if not model:
+            self._status_bar_var.set("Choose a model first.")
+            on_finished(False)
+            return
+        if prompt is None:
+            self._status_bar_var.set(f"Step {self._step - 1} has no response to inject.")
+            on_finished(False)
+            return
+        if not prompt:
+            self._status_bar_var.set(f"Enter a prompt in Step {self._step}.")
+            on_finished(False)
+            return
+
+        self._reset_descendants()
+        self._ran = False
+        self._on_finished = on_finished
         self._stop_event.clear()
         self._last_response = ""
         self.set_button_enabled(self._run_btn, False, "success")
         self.set_button_enabled(self._stop_btn, True, "danger")
-        self._status_bar_var.set(f"Running · {model}…")
+        self._status_bar_var.set(f"Running step {self._step} · {model}…")
         ToolWindowMixin.show_text(self._response_box, "")
 
         options = self._get_options()
@@ -591,6 +632,9 @@ class InferenceWindow(ToolWindowMixin):
         if ptok is not None:
             parts.append(f"{ptok} prompt tokens")
         self._status_bar_var.set(" · ".join(parts))
+        ok = not stopped
+        self._ran = ok
+        self._complete(ok)
 
     def _on_error(self, message: str):
         self.top.after(0, lambda: self._show_error(message))
@@ -608,6 +652,13 @@ class InferenceWindow(ToolWindowMixin):
             )
         else:
             self._status_bar_var.set(f"Error: {message}")
+        self._ran = False
+        self._complete(False)
+
+    def _complete(self, ok: bool):
+        callback, self._on_finished = self._on_finished, None
+        if callback is not None:
+            callback(ok)
 
     def _clear_all(self):
         self._prompt_text.delete("1.0", tk.END)
@@ -618,6 +669,8 @@ class InferenceWindow(ToolWindowMixin):
 
     def close(self):
         self._stop_event.set()
+        if self._chain_parent is not None and self._chain_parent._chain_child is self:
+            self._chain_parent._chain_child = None
         try:
             self.top.destroy()
         except tk.TclError:

@@ -1,8 +1,10 @@
 """Floating Ollama inference window for ProjectMapper."""
 
+import json
 import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import scrolledtext, ttk
+from pathlib import Path
 
 if __package__:
     from .ui_base import ToolWindowMixin, attach_tooltip
@@ -10,6 +12,37 @@ if __package__:
 else:
     from ui_base import ToolWindowMixin, attach_tooltip
     from inference import OllamaClient
+
+
+def _inference_config_path() -> Path:
+    """Sibling to the main settings.json, in the same per-user directory."""
+    try:
+        if __package__:
+            from ..core.settings import settings_path
+        else:
+            import sys
+            sys.path.insert(0, str(Path(__file__).parent.parent))
+            from core.settings import settings_path
+        return settings_path().parent / "inference.json"
+    except Exception:
+        return Path.home() / ".projectmapper_inference.json"
+
+
+def _load_inference_config() -> dict:
+    path = _inference_config_path()
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_inference_config(data: dict) -> None:
+    path = _inference_config_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except Exception:
+        pass
 
 __all__ = ["InferenceWindow"]
 
@@ -28,6 +61,7 @@ class InferenceWindow(ToolWindowMixin):
         self._stop_event = threading.Event()
         self._active_thread: threading.Thread | None = None
         self._context_path = context_path
+        self._config = _load_inference_config()
 
         self.top = tk.Toplevel(app.root)
         self.configure_tool_window("Inference — Ollama", "820x680", (600, 480))
@@ -97,6 +131,7 @@ class InferenceWindow(ToolWindowMixin):
         self._model_combo.configure(style="Review.TCombobox")
         attach_tooltip(self._model_combo, "inference.model", self.colors)
         self._model_combo.grid(row=0, column=1, sticky="ew", padx=4, pady=4)
+        self._model_combo.bind("<Button-3>", self._model_context_menu)
 
         self._info_btn = self.button(
             row, "Model Info", self._show_model_info, tooltip_id="inference.model_info"
@@ -224,7 +259,19 @@ class InferenceWindow(ToolWindowMixin):
             row=0, column=0, sticky="w", padx=6, pady=2,
         )
 
-        self._response_box = self.editor(outer)
+        self._response_box = scrolledtext.ScrolledText(
+            outer, wrap=tk.WORD, font=("Consolas", 10),
+            bg=self.colors["tree_bg"], fg=self.colors["text"],
+            insertbackground=self.colors["text"],
+            selectbackground=self.colors["selection"],
+            selectforeground=self.colors["text"],
+            relief=tk.FLAT, borderwidth=0,
+            highlightthickness=1,
+            highlightbackground=self.colors["panel_alt_bg"],
+            highlightcolor=self.colors["secondary"],
+            padx=10, pady=8,
+            state="disabled",
+        )
         self._response_box.grid(row=1, column=0, sticky="nsew")
 
     # ── status bar ────────────────────────────────────────────────────────────
@@ -260,8 +307,46 @@ class InferenceWindow(ToolWindowMixin):
         else:
             self._set_status(f"Offline — {status['message']}", "danger")
         self._model_combo["values"] = models
-        if models and not self._model_var.get():
+        default = self._config.get("default_model", "")
+        if default and default in models:
+            self._model_var.set(default)
+        elif models and not self._model_var.get():
             self._model_var.set(models[0])
+
+    def _model_context_menu(self, event):
+        model = self._model_var.get().strip()
+        default = self._config.get("default_model", "")
+        menu = tk.Menu(self.top, tearoff=False,
+                       bg=self.colors["panel_bg"], fg=self.colors["text"],
+                       activebackground=self.colors["secondary"],
+                       activeforeground=self.colors["text"],
+                       relief=tk.FLAT, bd=1)
+        if model and model != default:
+            menu.add_command(
+                label=f"Set '{model}' as default",
+                command=lambda: self._set_default_model(model),
+            )
+        if default:
+            menu.add_command(
+                label=f"Clear default ('{default}')",
+                command=self._clear_default_model,
+            )
+        if not menu.index("end") and menu.index("end") is None:
+            return
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _set_default_model(self, model: str):
+        self._config["default_model"] = model
+        _save_inference_config(self._config)
+        self._status_bar_var.set(f"Default model set to '{model}'.")
+
+    def _clear_default_model(self):
+        self._config.pop("default_model", None)
+        _save_inference_config(self._config)
+        self._status_bar_var.set("Default model cleared.")
 
     def _set_status(self, text, color_key):
         color = self.colors.get(color_key, self.colors["muted_text"])

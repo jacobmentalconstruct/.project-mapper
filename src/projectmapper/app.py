@@ -22,14 +22,16 @@ if __package__:
     from .tree_view import TreeProjection
     from .tools import (PatchError, validate_target, PatcherWindow,
                         TextToucherWindow, TextEditorWindow, ProjectPatcherWindow, BackupsWindow,
-                        HistoryWindow, SettingsWindow, SchemaToucherWindow, RunCommandWindow)
+                        HistoryWindow, SettingsWindow, SchemaToucherWindow, RunCommandWindow,
+                        InferenceWindow)
     from .tools.ui_base import attach_tooltip
     from .core import format_diagnostics, scan_project_tree
 else:
     from tree_view import TreeProjection
     from tools import (PatchError, validate_target, PatcherWindow,
                        TextToucherWindow, TextEditorWindow, ProjectPatcherWindow, BackupsWindow,
-                       HistoryWindow, SettingsWindow, SchemaToucherWindow, RunCommandWindow)
+                       HistoryWindow, SettingsWindow, SchemaToucherWindow, RunCommandWindow,
+                       InferenceWindow)
     from tools.ui_base import attach_tooltip
     from core import format_diagnostics, scan_project_tree
 
@@ -963,6 +965,8 @@ class ProjectMapperApp:
         menu.add_separator()
         menu.add_command(label="Run Command Here…",
                          command=lambda: self.open_run_command(folder))
+        menu.add_command(label="Run Inference…",
+                         command=lambda: self.open_inference(path))
         menu.add_command(label="Open Folder in Terminal",
                          command=lambda: self._open_folder_in_terminal(folder))
         try:
@@ -1051,6 +1055,16 @@ class ProjectMapperApp:
         except OSError as exc:
             self.report_error("Cannot open run-command window", exc)
             return None
+
+    def open_inference(self, context_path=None):
+        """Reuse or raise the single inference window."""
+        existing = getattr(self, "inference_window", None)
+        if existing is not None and existing.top.winfo_exists():
+            existing.top.deiconify()
+            existing.top.lift()
+            return existing
+        self.inference_window = InferenceWindow(self, context_path=context_path)
+        return self.inference_window
 
     def open_project_patcher(self, folder):
         try:

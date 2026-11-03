@@ -13,6 +13,8 @@ _MODULES = {
     "SettingsWindow": "settings_ui",
     "SchemaToucherWindow": "schema_toucher_ui",
     "RunCommandWindow": "run_command",
+    "OllamaClient": "inference",
+    "InferenceWindow": "inference_ui",
 }
 
 
@@ -29,4 +31,5 @@ __all__ = [
     "apply_patch_text", "create_text_file", "file_name", "project_patch_diff", "validate_target",
     "SchemaToucherWindow",
     "RunCommandWindow",
+    "OllamaClient", "InferenceWindow",
 ]

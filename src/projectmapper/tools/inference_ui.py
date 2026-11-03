@@ -1,0 +1,412 @@
+"""Floating Ollama inference window for ProjectMapper."""
+
+import threading
+import tkinter as tk
+from tkinter import ttk
+
+if __package__:
+    from .ui_base import ToolWindowMixin, attach_tooltip
+    from .inference import OllamaClient
+else:
+    from ui_base import ToolWindowMixin, attach_tooltip
+    from inference import OllamaClient
+
+__all__ = ["InferenceWindow"]
+
+
+class InferenceWindow(ToolWindowMixin):
+    """Nonmodal, resizable floating window for Ollama inference.
+
+    Only one instance is kept alive; calling open_or_raise() on the app
+    re-uses or raises the existing window.
+    """
+
+    def __init__(self, app, context_path=None):
+        self.app = app
+        self.colors = app.theme
+        self._client = OllamaClient()
+        self._stop_event = threading.Event()
+        self._active_thread: threading.Thread | None = None
+        self._context_path = context_path
+
+        self.top = tk.Toplevel(app.root)
+        self.configure_tool_window("Inference — Ollama", "820x680", (600, 480))
+        # Non-modal: no grab_set(), no transient().
+        self.top.protocol("WM_DELETE_WINDOW", self.close)
+        self.top.columnconfigure(0, weight=1)
+        self.top.rowconfigure(3, weight=1)  # response area expands
+
+        self._build_connection_row()
+        self._build_model_row()
+        self._build_config_row()
+        self._build_prompt_row()
+        self._build_response_area()
+        self._build_status_bar()
+
+        # Kick off an async status + model refresh on open.
+        self.top.after(50, self._async_refresh_models)
+
+    # ── connection row ────────────────────────────────────────────────────────
+
+    def _build_connection_row(self):
+        row = self.frame(self.top)
+        row.grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 2))
+        row.columnconfigure(1, weight=1)
+
+        self.label(row, text="Endpoint:", panel=True).grid(row=0, column=0, padx=(6, 4), pady=6)
+
+        self._endpoint_var = tk.StringVar(self.top, value=self._client.endpoint)
+        entry = tk.Entry(
+            row, textvariable=self._endpoint_var,
+            font=("Consolas", 10), relief="flat",
+            bg=self.colors["field_bg"], fg=self.colors["field_text"],
+            insertbackground=self.colors["text"],
+        )
+        attach_tooltip(entry, "inference.endpoint", self.colors)
+        entry.grid(row=0, column=1, sticky="ew", padx=4, pady=6)
+        entry.bind("<Return>", lambda _event: self._async_refresh_models())
+
+        self._status_dot = tk.Label(
+            row, text="●", font=("Arial", 11),
+            bg=self.colors["panel_bg"], fg=self.colors["muted_text"],
+        )
+        self._status_dot.grid(row=0, column=2, padx=(4, 2))
+
+        self._status_label = self.label(row, text="—", panel=True, font=("Arial", 9))
+        self._status_label.grid(row=0, column=3, padx=(0, 6))
+
+        self.button(
+            row, "Refresh", self._async_refresh_models, tooltip_id="inference.refresh_models"
+        ).grid(row=0, column=4, padx=(4, 6), pady=4)
+
+    # ── model row ─────────────────────────────────────────────────────────────
+
+    def _build_model_row(self):
+        row = self.frame(self.top)
+        row.grid(row=1, column=0, sticky="ew", padx=10, pady=2)
+        row.columnconfigure(1, weight=1)
+
+        self.label(row, text="Model:", panel=True).grid(row=0, column=0, padx=(6, 4), pady=4)
+
+        self._model_var = tk.StringVar(self.top)
+        self._model_combo = ttk.Combobox(
+            row, textvariable=self._model_var, state="readonly",
+            font=("Arial", 10),
+        )
+        self.setup_review_styles()
+        self._model_combo.configure(style="Review.TCombobox")
+        attach_tooltip(self._model_combo, "inference.model", self.colors)
+        self._model_combo.grid(row=0, column=1, sticky="ew", padx=4, pady=4)
+
+        self._info_btn = self.button(
+            row, "Model Info", self._show_model_info, tooltip_id="inference.model_info"
+        )
+        self._info_btn.grid(row=0, column=2, padx=(4, 6), pady=4)
+
+    # ── inference config (collapsible) ────────────────────────────────────────
+
+    def _build_config_row(self):
+        self._config_expanded = tk.BooleanVar(value=False)
+
+        toggle_row = self.frame(self.top)
+        toggle_row.grid(row=2, column=0, sticky="ew", padx=10, pady=(2, 0))
+
+        self._config_toggle_btn = tk.Button(
+            toggle_row, text="▶ Inference options",
+            bg=self.colors["panel_bg"], fg=self.colors["muted_text"],
+            relief=tk.FLAT, bd=0, font=("Arial", 9), cursor="hand2",
+            activebackground=self.colors["panel_bg"],
+            activeforeground=self.colors["text"],
+            command=self._toggle_config,
+        )
+        attach_tooltip(self._config_toggle_btn, "inference.options_toggle", self.colors)
+        self._config_toggle_btn.pack(side=tk.LEFT, padx=6, pady=2)
+
+        self._config_frame = self.frame(self.top)
+        # Not grid'd until expanded.
+
+        cfg = self._config_frame
+        cfg.columnconfigure(1, weight=1)
+        cfg.columnconfigure(3, weight=1)
+
+        def _spinbox(parent, row, col, label, var, from_, to, tooltip_id):
+            self.label(parent, text=label, panel=True, font=("Arial", 9)).grid(
+                row=row, column=col, padx=(8, 2), pady=3, sticky="w"
+            )
+            sb = ttk.Spinbox(
+                parent, textvariable=var, from_=from_, to=to,
+                width=7, style="Review.TSpinbox",
+            )
+            attach_tooltip(sb, tooltip_id, self.colors)
+            sb.grid(row=row, column=col + 1, padx=(2, 12), pady=3, sticky="w")
+
+        self._temp_var = tk.StringVar(value="0.8")
+        self._top_p_var = tk.StringVar(value="0.9")
+        self._ctx_var = tk.StringVar(value="4096")
+        self._seed_var = tk.StringVar(value="0")
+
+        _spinbox(cfg, 0, 0, "Temperature:", self._temp_var, 0.0, 2.0, "inference.temperature")
+        _spinbox(cfg, 0, 2, "Top P:",        self._top_p_var, 0.0, 1.0, "inference.top_p")
+        _spinbox(cfg, 1, 0, "Context len:",  self._ctx_var, 512, 131072, "inference.context_len")
+        _spinbox(cfg, 1, 2, "Seed (0=rand):", self._seed_var, 0, 999999999, "inference.seed")
+
+    def _toggle_config(self):
+        expanded = not self._config_expanded.get()
+        self._config_expanded.set(expanded)
+        if expanded:
+            self._config_toggle_btn.config(text="▼ Inference options")
+            self._config_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 2))
+            # Shift the prompt row down.
+            self.top.rowconfigure(2, weight=0)
+        else:
+            self._config_toggle_btn.config(text="▶ Inference options")
+            self._config_frame.grid_forget()
+
+    # ── prompt row ────────────────────────────────────────────────────────────
+
+    def _build_prompt_row(self):
+        outer = self.frame(self.top)
+        outer.grid(row=3, column=0, sticky="nsew", padx=10, pady=(4, 2))
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(1, weight=1)
+        self.top.rowconfigure(3, weight=1)
+
+        hdr = self.frame(outer)
+        hdr.grid(row=0, column=0, sticky="ew")
+        self.label(hdr, text="Prompt", panel=True, font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=6, pady=2)
+        if self._context_path:
+            self.label(
+                hdr, text=f"Context: {self._context_path.name}",
+                panel=True, font=("Arial", 9),
+            ).pack(side=tk.LEFT, padx=4)
+
+        self._prompt_text = tk.Text(
+            outer, wrap=tk.WORD, font=("Consolas", 10), height=6,
+            bg=self.colors["field_bg"], fg=self.colors["field_text"],
+            insertbackground=self.colors["text"],
+            selectbackground=self.colors["selection"],
+            selectforeground=self.colors["text"],
+            relief=tk.FLAT, padx=8, pady=6,
+        )
+        attach_tooltip(self._prompt_text, "inference.prompt", self.colors)
+        self._prompt_text.grid(row=1, column=0, sticky="nsew")
+
+        btn_row = self.frame(outer)
+        btn_row.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+
+        self._run_btn = self.button(
+            btn_row, "Run Inference", self._run, "success",
+            tooltip_id="inference.run",
+        )
+        self._run_btn.pack(side=tk.LEFT, padx=6, pady=4)
+
+        self._stop_btn = self.button(
+            btn_row, "Stop", self._stop, "danger",
+            state="disabled", tooltip_id="inference.stop",
+        )
+        self._stop_btn.pack(side=tk.LEFT, padx=2, pady=4)
+
+        self.button(
+            btn_row, "Clear", self._clear_all,
+            tooltip_id="inference.clear",
+        ).pack(side=tk.RIGHT, padx=6, pady=4)
+
+    # ── response area ─────────────────────────────────────────────────────────
+
+    def _build_response_area(self):
+        outer = self.frame(self.top)
+        outer.grid(row=4, column=0, sticky="nsew", padx=10, pady=(2, 4))
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(1, weight=1)
+        self.top.rowconfigure(4, weight=2)
+
+        self.label(outer, text="Response", panel=True, font=("Arial", 9, "bold")).grid(
+            row=0, column=0, sticky="w", padx=6, pady=2,
+        )
+
+        self._response_box = self.editor(outer)
+        self._response_box.grid(row=1, column=0, sticky="nsew")
+
+    # ── status bar ────────────────────────────────────────────────────────────
+
+    def _build_status_bar(self):
+        self._status_bar_var = tk.StringVar(value="Ready.")
+        bar = tk.Label(
+            self.top, textvariable=self._status_bar_var,
+            bg=self.colors["status_bg"], fg=self.colors["status_text"],
+            anchor="w", padx=8, font=("Arial", 9),
+        )
+        bar.grid(row=5, column=0, sticky="ew")
+
+    # ── async helpers ─────────────────────────────────────────────────────────
+
+    def _async_refresh_models(self):
+        endpoint = self._endpoint_var.get().strip()
+        self._client = OllamaClient(endpoint or "http://localhost:11434")
+        self._set_status("Checking…", "muted_text")
+        t = threading.Thread(target=self._bg_refresh_models, daemon=True)
+        t.start()
+
+    def _bg_refresh_models(self):
+        status = self._client.check_status()
+        models = self._client.list_models() if status["ok"] else []
+        self.top.after(0, lambda: self._apply_refresh(status, models))
+
+    def _apply_refresh(self, status, models):
+        if not self.top.winfo_exists():
+            return
+        if status["ok"]:
+            self._set_status("Connected", "success")
+        else:
+            self._set_status(f"Offline — {status['message']}", "danger")
+        self._model_combo["values"] = models
+        if models and not self._model_var.get():
+            self._model_var.set(models[0])
+
+    def _set_status(self, text, color_key):
+        color = self.colors.get(color_key, self.colors["muted_text"])
+        self._status_dot.config(fg=color)
+        self._status_label.config(text=text)
+
+    # ── model info popup ──────────────────────────────────────────────────────
+
+    def _show_model_info(self):
+        model = self._model_var.get().strip()
+        if not model:
+            return
+        self._status_bar_var.set(f"Fetching info for {model}…")
+
+        def _bg():
+            info = self._client.model_info(model)
+            self.top.after(0, lambda: _show(info))
+
+        def _show(info):
+            if not self.top.winfo_exists():
+                return
+            self._status_bar_var.set("Ready.")
+            win = tk.Toplevel(self.top)
+            win.title(f"Model Info — {model}")
+            win.geometry("520x400")
+            win.configure(bg=self.colors["panel_bg"])
+            win.transient(self.top)
+            import json as _json
+            text = _json.dumps(info, indent=2) if info else "(no metadata returned)"
+            box = self.editor(win)
+            box.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+            ToolWindowMixin.show_text(box, text)
+            tk.Button(
+                win, text="Close", command=win.destroy,
+                bg=self.colors["panel_alt_bg"], fg=self.colors["text"],
+                relief=tk.FLAT, padx=12, pady=4,
+            ).pack(pady=(0, 8))
+
+        threading.Thread(target=_bg, daemon=True).start()
+
+    # ── run / stop ────────────────────────────────────────────────────────────
+
+    def _get_options(self) -> dict | None:
+        if not self._config_expanded.get():
+            return None
+        try:
+            opts = {}
+            t = float(self._temp_var.get())
+            opts["temperature"] = t
+            tp = float(self._top_p_var.get())
+            opts["top_p"] = tp
+            ctx = int(self._ctx_var.get())
+            if ctx > 0:
+                opts["num_ctx"] = ctx
+            seed = int(self._seed_var.get())
+            if seed > 0:
+                opts["seed"] = seed
+            return opts or None
+        except (ValueError, TypeError):
+            return None
+
+    def _run(self):
+        model = self._model_var.get().strip()
+        prompt = self._prompt_text.get("1.0", tk.END).strip()
+        if not model or not prompt:
+            self._status_bar_var.set("Choose a model and enter a prompt first.")
+            return
+        if self._active_thread and self._active_thread.is_alive():
+            return
+
+        self._stop_event.clear()
+        self.set_button_enabled(self._run_btn, False, "success")
+        self.set_button_enabled(self._stop_btn, True, "danger")
+        self._status_bar_var.set(f"Running · {model}…")
+        ToolWindowMixin.show_text(self._response_box, "")
+
+        options = self._get_options()
+        self._active_thread = threading.Thread(
+            target=self._client.generate,
+            args=(model, prompt, options,
+                  self._on_token, self._on_done, self._on_error,
+                  self._stop_event),
+            daemon=True,
+            name="inference-generate",
+        )
+        self._active_thread.start()
+
+    def _stop(self):
+        self._stop_event.set()
+
+    def _on_token(self, token: str):
+        self.top.after(0, lambda: self._append_token(token))
+
+    def _append_token(self, token: str):
+        if not self.top.winfo_exists():
+            return
+        self._response_box.config(state="normal")
+        self._response_box.insert(tk.END, token)
+        self._response_box.see(tk.END)
+        self._response_box.config(state="disabled")
+
+    def _on_done(self, meta: dict):
+        self.top.after(0, lambda: self._finish(meta))
+
+    def _finish(self, meta: dict):
+        if not self.top.winfo_exists():
+            return
+        self.set_button_enabled(self._run_btn, True, "success")
+        self.set_button_enabled(self._stop_btn, False, "danger")
+        stopped = meta.get("stopped")
+        elapsed = meta.get("elapsed_s", 0)
+        rtok = meta.get("response_tokens")
+        ptok = meta.get("prompt_tokens")
+        parts = []
+        if stopped:
+            parts.append("Stopped")
+        else:
+            parts.append("Done")
+        parts.append(f"{elapsed}s")
+        if rtok is not None:
+            parts.append(f"{rtok} response tokens")
+        if ptok is not None:
+            parts.append(f"{ptok} prompt tokens")
+        self._status_bar_var.set(" · ".join(parts))
+
+    def _on_error(self, message: str):
+        self.top.after(0, lambda: self._show_error(message))
+
+    def _show_error(self, message: str):
+        if not self.top.winfo_exists():
+            return
+        self.set_button_enabled(self._run_btn, True, "success")
+        self.set_button_enabled(self._stop_btn, False, "danger")
+        self._status_bar_var.set(f"Error: {message}")
+
+    def _clear_all(self):
+        self._prompt_text.delete("1.0", tk.END)
+        ToolWindowMixin.show_text(self._response_box, "")
+        self._status_bar_var.set("Ready.")
+
+    # ── lifecycle ─────────────────────────────────────────────────────────────
+
+    def close(self):
+        self._stop_event.set()
+        try:
+            self.top.destroy()
+        except tk.TclError:
+            pass

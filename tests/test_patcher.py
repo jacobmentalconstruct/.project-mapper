@@ -269,7 +269,7 @@ class PatcherUITests(PumpMixin, unittest.TestCase):
         before = dict(self.app.folder_item_states)
         with patch("projectmapper.app.tk.Menu") as menu:
             self.app.on_file_context_menu(SimpleNamespace(keysym="F10"))
-            self.assertEqual(menu.return_value.add_command.call_count, 8)
+            self.assertEqual(menu.return_value.add_command.call_count, 9)
         self.assertEqual(self.app.folder_item_states, before)
 
     def test_save_waits_for_capture(self):

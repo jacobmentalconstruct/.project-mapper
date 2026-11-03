@@ -1,7 +1,0 @@
-{
-  "event_time": "2026-10-27",
-  "event_type": "implementation",
-  "summary": "SchemaToucherWindow (schema_toucher_ui.py) implemented: three-tab Tkinter UI. Entry Form with scrollable schema-driven form, Entry JSON preview, Append button. Schema Editor with Registered dropdown, text editor, Register button. Browse Entries with Entire Spine / Single Entry / Raw JSONL modes and Prev/Next nav.",
-  "decision_or_outcome": "Field widgets: Entry for strings, Checkbutton for bool, Combobox for enum, Text (5 rows, wrap=word) for textarea fields (format=textarea), Text (3 rows, wrap=none) for object/array fields. _get_value/_set_value/_field_widget are pure helpers testable without a window.",
-  "open_questions": ""
-}

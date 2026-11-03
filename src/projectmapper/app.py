@@ -441,6 +441,7 @@ class ProjectMapperApp:
         self.stop_event = threading.Event()
         self.widgets = {}
         self.current_progress_popup = None
+        self._tk_thread = threading.current_thread()
         self.controller, self.approve_action = create_application(self.initial_root)
         self.controller.scan_fn = lambda root, policy, stop: scan_project_tree(root, policy, stop)
         self.project_state = self.controller.state
@@ -448,7 +449,8 @@ class ProjectMapperApp:
         self.desktop_operations = set()
         self.editor_windows = set()
         self.syncing_controls = False
-        self.controller.dispatcher.subscribe(lambda event: self.gui_queue.put(lambda: self.on_action_event(event)))
+        self.controller.dispatcher.subscribe(
+            lambda event: None if event.type == "output" else self.gui_queue.put(lambda: self.on_action_event(event)))
         # Hidden failures (decision D): one concise log line; the traceback stays in History.
         self.controller.history.subscribe(
             lambda record: self.gui_queue.put(lambda: self._announce_problem(record))
@@ -2338,16 +2340,6 @@ class ProjectMapperApp:
     def export_vendor_app(self):
         self.run_threaded_action(self._export_vendor_app_impl, "vendor_export", use_popup=True)
 
-    def export_sidecar_app(self):
-        self.run_threaded_action(self._export_sidecar_app_impl, "sidecar_export", use_popup=True)
-
-    def _export_sidecar_app_impl(self):
-        result = create_sidecar_export(log_callback=self.schedule_log_message)
-        if result.get("zip_path"):
-            self.schedule_log_message(f"Sidecar ZIP ready: {result['zip_path']}")
-        else:
-            self.schedule_log_message(f"Sidecar export ready: {result['export_name']} ({result['included_count']} files)")
-
     def _export_vendor_app_impl(self):
         result = self.action("vendor.export")
         self.schedule_log_message(
@@ -2454,7 +2446,9 @@ class ProjectMapperApp:
             status.set(f"{ts} {msg}")
 
     def process_gui_queue(self):
-        while True:
+        # While a synchronous action keeps the windows painting, queued work waits for it
+        # to return, preserving the order the UI has always seen.
+        while not getattr(self, "_pumping", 0):
             try:
                 callback = self.gui_queue.get_nowait()
             except queue.Empty:

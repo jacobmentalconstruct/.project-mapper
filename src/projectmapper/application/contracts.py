@@ -76,3 +76,7 @@ class Context:
     def progress(self, **details):
         self.check_cancelled()
         self._publish("progress", details)
+
+    def output(self, **details):
+        """Stream a chunk to live listeners. Not kept in history or the event replay."""
+        self._publish("output", details)

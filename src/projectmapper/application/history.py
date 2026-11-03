@@ -50,7 +50,7 @@ class OperationHistory:
 
     def observe(self, event):
         """Dispatcher listener. Safe to call from the dispatcher worker thread."""
-        if event.action in UNRECORDED:
+        if event.action in UNRECORDED or event.type == "output":
             return
         with self._lock:
             record = self._records.get(event.operation_id)

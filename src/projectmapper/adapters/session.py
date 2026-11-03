@@ -14,6 +14,7 @@ trusted, so this session adds (plan section 12B, decisions F2–F5):
 
 import copy
 import hashlib
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +38,7 @@ READS = {
     "patch.schema": (), "patch.load": ("path",), "patch.validate": ("path",), "patch.result": (),
     "project_patch.add_entry": ("root", "path"), "project_patch.validate": ("root",),
     "backup.list": (), "history.query": (),
+    "spine.list": (), "spine.read": ("path",),
     "file.rename": ("path",), "file.move": ("path", "to"),
     "folder.create": ("path",), "folder.rename": ("path",),
     "folder.move": ("path", "to"), "folder.delete": ("path",),
@@ -45,7 +47,8 @@ WRITES = {"text.save": ("path",), "patch.save": (), "file.create": ("folder",),
           "project_patch.apply": (), "file.delete": ("path",),
           "file.rename": ("path",), "file.move": ("path", "to"),
           "folder.create": ("path",), "folder.rename": ("path",),
-          "folder.move": ("path", "to"), "folder.delete": ("path",)}
+          "folder.move": ("path", "to"), "folder.delete": ("path",),
+          "spine.append": ()}  # its path is confined by _confine_spine
 EXPOSED = {**READS, **WRITES}
 NOT_EXPOSED = {
     "project.set_root": "The project root is fixed when the adapter starts.",
@@ -56,6 +59,10 @@ NOT_EXPOSED = {
     "backup.restore": "Restoring backups is left to the desktop.",
     "backup.prune_preview": "Removing backups is left to the desktop.",
     "backup.prune": "Removing backups is left to the desktop.",
+    "command.run": "Running shell commands is left to the desktop user.",
+    "inference.models": "Local model inference is a desktop tool.",
+    "inference.model_info": "Local model inference is a desktop tool.",
+    "inference.generate": "Local model inference is a desktop tool.",
 }
 SINGLE_FILE_WRITES = ("text.save", "patch.save", "file.create")
 BACKED_UP = ("text.save", "patch.save", "project_patch.apply")
@@ -146,6 +153,10 @@ class AdapterSession:
             payload = self._prepare(action, copy.deepcopy(payload))
             if action in SINGLE_FILE_WRITES and self.settings.ask_before_single_file_writes:
                 outcome = self._approved_single_write(action, payload)
+            elif action == "spine.append" and self.settings.ask_before_structural_writes:
+                # Appending never changes existing records, so it follows the
+                # non-destructive-transform setting rather than always asking.
+                outcome = self._approved_single_write(action, payload)
             else:
                 outcome = self._run(action, payload)
         except ActionError as exc:
@@ -182,12 +193,25 @@ class AdapterSession:
             raise ActionError("unsafe_path", "ProjectMapper's own folders cannot be written by agents.")
         return str(path)
 
+    def _confine_spine(self, value):
+        """Spines may live in the sidecar's spines/ folder; nothing else of ProjectMapper's is writable."""
+        path = Path(self._confine(value, False))
+        parts = [part.casefold() for part in path.relative_to(self.root).parts]
+        if OUTPUT_ROOT_NAME.casefold() in parts:
+            raise ActionError("unsafe_path", "ProjectMapper's output folder cannot be written by agents.")
+        sidecar = SIDECAR_ROOT_NAME.casefold()
+        if sidecar in parts and parts[parts.index(sidecar) + 1:parts.index(sidecar) + 2] != ["spines"]:
+            raise ActionError("unsafe_path", "Inside ProjectMapper's folder, agents may append only to spines/.")
+        return str(path)
+
     def _prepare(self, action, payload):
         if action in ("project_patch.validate", "project_patch.add_entry"):
             payload.setdefault("root", str(self.root))
         for key in EXPOSED[action]:
             if key in payload:
                 payload[key] = self._confine(payload[key], action in WRITES)
+        if action == "spine.append" and "path" in payload:
+            payload["path"] = self._confine_spine(payload["path"])
         if action == "backup.list":
             if payload.get("scope", "project") != "project":
                 raise ActionError("invalid_input", "Agents can list only the project's backups.")
@@ -326,6 +350,16 @@ class AdapterSession:
         return ApprovalRequest("file.create", self.origin, "Create file?",
                                f"Create the new file {target}?\n\nAn existing file is never overwritten.",
                                (str(Path(folder) / created),), unified_diff_text([DiffFile(target, "", content)]))
+
+    def _preview_spine_append(self, payload):
+        path, schema, data = payload.get("path"), payload.get("schema"), payload.get("data")
+        if not isinstance(path, str) or not isinstance(schema, str) or not isinstance(data, dict):
+            raise ActionError("invalid_input", "spine.append needs path, schema and data.")
+        name = self._relative(path)
+        line = json.dumps({"kind": "entry", "schema": schema, "data": data}, ensure_ascii=False, indent=2)
+        return ApprovalRequest("spine.append", self.origin, "Append spine entry?",
+                               f"Append a {schema} entry to {name}?\n\nExisting entries are never changed.",
+                               (path,), unified_diff_text([DiffFile(name + " (new entry)", "", line + "\n")]))
 
     # --- results ----------------------------------------------------------------
 

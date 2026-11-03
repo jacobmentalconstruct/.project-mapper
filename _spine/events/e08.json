@@ -1,7 +1,0 @@
-{
-  "event_time": "2026-10-27",
-  "event_type": "implementation",
-  "summary": "Named spine lifecycle: Spine supports rename() (stem only, .jsonl appended). Spine can be opened from any path (independent location). SchemaToucherWindow supports Spine > Rename Spine menu item. Reopen from a different path works via Spine.open().",
-  "decision_or_outcome": "Spine.rename() updates _path in-place and renames the file. SpineError raised if target exists. SchemaToucherWindow._rename_spine() calls spine.rename() and updates the header. open_schema_toucher() in app.py accepts an optional path= kwarg to open a specific spine on launch.",
-  "open_questions": ""
-}

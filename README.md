@@ -52,6 +52,8 @@ The app opens and automatically targets the project it is installed in.
 | SQLite snapshot | Compiles tree + file contents into a queryable database |
 | Markdown export | Tree, filedump, or combined — paste directly into an AI chat |
 | SchemaTOUCHER | Schema-driven JSONL journal: register schemas, append entries, browse |
+| Run Command | Run shell commands in any project folder and stream output |
+| Inference | Send prompts to a local Ollama model; chain steps, cascade, inspect history |
 | MCP / CLI adapter | Agents can drive ProjectMapper over JSON-RPC or subprocess |
 
 ---
@@ -65,7 +67,7 @@ The app opens and automatically targets the project it is installed in.
 ├── run.bat / run.sh   ← launch scripts
 ├── setup_env.*        ← one-time setup scripts
 ├── examples/          ← sample spine demonstrating the JSONL format
-├── project-lineage.jsonl  ← design journal for this tool's own history
+├── docs/              ← CLI and MCP agent integration guide
 │
 ├── .venv/             ← created by setup_env (gitignored)
 ├── spines/            ← your spine files live here (gitignored)
@@ -94,8 +96,7 @@ Your spine data and snapshots are unaffected.
 
 A spine is a `.jsonl` file where every line is either a **schema definition** or a **data entry**. Use them as design journals, decision logs, or structured notes that live beside your code.
 
-See `examples/sample-spine.jsonl` for a minimal working example.  
-See `project-lineage.jsonl` for an evidence-grounded record of this tool's own design history.
+See `examples/sample-spine.jsonl` for a minimal working example.
 
 Open SchemaTOUCHER from the Tools menu inside ProjectMapper.
 
@@ -103,19 +104,21 @@ Open SchemaTOUCHER from the Tools menu inside ProjectMapper.
 
 ## CLI and MCP
 
-Run actions from the command line:
+`setup_env` installs two command-line entry points into `.project-mapper/.venv`.
+
+Run actions from the command line (Windows: `.venv\Scripts\projectmapper-cli`):
 
 ```sh
-.project-mapper/run.sh <project-folder> --action scan
+.project-mapper/.venv/bin/projectmapper-cli --root . scan
 ```
 
-Start the MCP server for agent integration:
+Start the MCP server for agent integration (needs the optional extra: `pip install ".[mcp]"` inside the venv):
 
 ```sh
-.project-mapper/run.sh --mcp
+.project-mapper/.venv/bin/projectmapper-mcp --root .
 ```
 
-See the full action inventory in the app's Help menu or in `src/projectmapper/application/contracts.py`.
+See [docs/agent-integration.md](docs/agent-integration.md) for installation, MCP client configuration, the tool list, and the approval and safety model.
 
 ---
 

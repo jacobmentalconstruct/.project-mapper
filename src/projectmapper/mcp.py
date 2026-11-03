@@ -48,7 +48,7 @@ _FIELD_TYPES = {
     "patch": "object", "force_indent": "boolean", "plan_id": "string", "manifest": "object",
     "output": "string", "include_tree": "boolean", "source_root": "string",
     "export_root": "string", "make_zip": "boolean", "revision": "integer",
-    "max_bytes": "integer", "recursive": "boolean",
+    "max_bytes": "integer", "recursive": "boolean", "schema": "string", "data": "object",
 }
 
 _DESCRIPTIONS = {
@@ -57,6 +57,8 @@ _DESCRIPTIONS = {
     "root": "Must be the configured project root.",
     "patch": "Structured patch proposal accepted by ProjectMapper's patch validator.",
     "manifest": "Structured project patch proposal accepted by ProjectMapper's validator.",
+    "schema": "Registered schema key, such as design-event@1.",
+    "data": "Entry fields matching the schema's properties.",
 }
 
 _ACTION_DESCRIPTIONS = {
@@ -73,6 +75,9 @@ _ACTION_DESCRIPTIONS = {
     "folder.rename": "Rename a project folder within the project. The change is recorded for undo.",
     "folder.move": "Move a project folder within the project. The change is recorded for undo.",
     "folder.delete": "Delete an empty project folder, or recursively delete its contents when requested. Approval is required for destructive changes.",
+    "spine.list": "List SchemaTOUCHER spines (.jsonl design journals) in the project.",
+    "spine.read": "Read a spine's schemas and entries. Entries carry their 0-based index; filter by schema and page with start/limit.",
+    "spine.append": "Append one entry to a spine under an already-registered schema. Data is checked against the schema; existing entries are never changed. Follows the owner's non-destructive-transform approval setting.",
 }
 
 
@@ -274,7 +279,7 @@ def create_server(root, *, session=None, approver=None):
             annotations=ToolAnnotations(readOnlyHint=action not in {
                 "text.save", "patch.save", "file.create", "project_patch.apply", "file.delete",
                 "file.rename", "file.move", "folder.create", "folder.rename", "folder.move",
-                "folder.delete"},
+                "folder.delete", "spine.append"},
                 destructiveHint=action in {"text.save", "patch.save", "project_patch.apply",
                                            "file.delete", "folder.delete"},
                 idempotentHint=action in {"state.get", "project.scan", "exclusions.inspect",

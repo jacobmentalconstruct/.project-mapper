@@ -17,7 +17,8 @@ from .patcher import PatchError
 from .ui_base import ToolWindowMixin, attach_tooltip
 
 CATEGORIES = ("All", "internal", "project", "selection", "exclusions", "capture", "snapshot", "text", "file",
-              "patch", "project_patch", "backup", "output", "vendor", "application", "state")
+              "patch", "project_patch", "backup", "output", "vendor", "application", "state",
+              "spine", "command", "inference")
 OUTCOMES = ("All", "failed", "recovery_required", "cancelled", "succeeded", "running", "awaiting_approval")
 REFRESH_DELAY_MS = 250
 

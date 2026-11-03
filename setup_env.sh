@@ -11,5 +11,6 @@ fi
 if [ -f "$SCRIPT_DIR/requirements.txt" ]; then
     "$SCRIPT_DIR/.venv/bin/pip" install -r "$SCRIPT_DIR/requirements.txt"
 fi
+"$SCRIPT_DIR/.venv/bin/pip" install -e "$SCRIPT_DIR"
 echo ""
 echo "[SUCCESS] Environment ready. Launch with ./run.sh"

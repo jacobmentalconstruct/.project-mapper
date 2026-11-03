@@ -1,9 +1,5 @@
-"""Run an arbitrary shell command in a chosen folder and stream its output."""
+"""Run a shell command in a project folder through the command.run action and stream its output."""
 
-import queue
-import subprocess
-import sys
-import threading
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk
@@ -12,6 +8,12 @@ if __package__:
     from .ui_base import ToolWindowMixin, attach_tooltip
 else:
     from ui_base import ToolWindowMixin, attach_tooltip
+try:
+    from ..application.desktop import Stream
+    from ..application.errors import describe
+except ImportError:  # run as a script: tools/ and application/ are top-level packages
+    from application.desktop import Stream
+    from application.errors import describe
 
 __all__ = ["RunCommandWindow"]
 
@@ -23,12 +25,9 @@ class RunCommandWindow(ToolWindowMixin):
         self.app = app
         self.colors = app.theme
         self.folder = folder
-        self._process = None
-        self._reader_thread = None
-        self._output_queue = queue.Queue()
+        self._stream = None
         self._history = []
         self._history_index = -1
-        self._poll_id = None
 
         self.top = tk.Toplevel(app.root)
         self.configure_tool_window(
@@ -143,7 +142,7 @@ class RunCommandWindow(ToolWindowMixin):
 
     def _run(self):
         cmd = self._cmd_var.get().strip()
-        if not cmd or self._process is not None:
+        if not cmd or self._stream is not None:
             return
         # record history (most recent first, no consecutive duplicates)
         if not self._history or self._history[0] != cmd:
@@ -152,77 +151,31 @@ class RunCommandWindow(ToolWindowMixin):
         self._history_index = -1
 
         self._append(f"$ {cmd}\n", "info")
+        try:
+            self._stream = Stream(self.app, "command.run", {"folder": str(self.folder), "command": cmd},
+                                  widget=self.top, on_output=lambda chunk: self._append(chunk["text"]),
+                                  on_done=self._done)
+        except Exception as exc:
+            self._append(f"Error: {exc}\n", "err")
+            return
         self.set_button_enabled(self._run_btn, False, "success")
         self._kill_btn.configure(state="normal")
 
-        try:
-            if sys.platform == "win32":
-                self._process = subprocess.Popen(
-                    ["powershell.exe", "-NoLogo", "-NonInteractive", "-Command", cmd],
-                    cwd=str(self.folder),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                )
-            else:
-                self._process = subprocess.Popen(
-                    ["/bin/sh", "-c", cmd],
-                    cwd=str(self.folder),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                )
-        except OSError as exc:
-            self._append(f"Error: {exc}\n", "err")
-            self._process = None
-            self.set_button_enabled(self._run_btn, True, "success")
-            self._kill_btn.configure(state="disabled")
-            return
-
-        self._reader_thread = threading.Thread(
-            target=self._read_output, daemon=True, name="run-command-reader"
-        )
-        self._reader_thread.start()
-        self._poll_queue()
-
-    def _read_output(self):
-        proc = self._process
-        try:
-            for raw in proc.stdout:
-                self._output_queue.put(("line", raw.decode("utf-8", errors="replace")))
-        except OSError:
-            pass
-        finally:
-            proc.wait()
-            self._output_queue.put(("done", proc.returncode))
-
-    def _poll_queue(self):
-        try:
-            while True:
-                kind, value = self._output_queue.get_nowait()
-                if kind == "line":
-                    self._append(value)
-                elif kind == "done":
-                    code = value
-                    msg = f"\n[Exited with code {code}]\n" if code else "\n[Done]\n"
-                    self._append(msg, "info")
-                    self._process = None
-                    self.set_button_enabled(self._run_btn, True, "success")
-                    self._kill_btn.configure(state="disabled")
-                    self._poll_id = None
-                    return
-        except queue.Empty:
-            pass
-        try:
-            self._poll_id = self.top.after(40, self._poll_queue)
-        except tk.TclError:
-            pass
+    def _done(self, result):
+        self._stream = None
+        if result.status == "succeeded":
+            code = result.data.get("exit_code")
+            self._append(f"\n[Exited with code {code}]\n" if code else "\n[Done]\n", "info")
+        elif result.status == "cancelled":
+            self._append("\n[Stopped]\n", "info")
+        else:
+            self._append(f"\n{describe(result.error)}\n", "err")
+        self.set_button_enabled(self._run_btn, True, "success")
+        self._kill_btn.configure(state="disabled")
 
     def _kill(self):
-        if self._process is not None:
-            try:
-                self._process.kill()
-            except OSError:
-                pass
+        if self._stream is not None:
+            self._stream.cancel()
 
     # ── output helpers ────────────────────────────────────────────────────────
 
@@ -249,15 +202,7 @@ class RunCommandWindow(ToolWindowMixin):
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
     def close(self):
-        if self._poll_id is not None:
-            try:
-                self.top.after_cancel(self._poll_id)
-            except tk.TclError:
-                pass
-            self._poll_id = None
-        if self._process is not None:
-            try:
-                self._process.kill()
-            except OSError:
-                pass
+        if self._stream is not None:
+            self._stream.detach()
+            self._stream = None
         self.top.destroy()

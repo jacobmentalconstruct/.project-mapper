@@ -2,6 +2,7 @@
 
 from collections import Counter
 import hashlib
+import os
 import stat
 from pathlib import Path
 import threading
@@ -13,6 +14,11 @@ from types import SimpleNamespace
 from .contracts import ActionError, ApprovalPlan, Request
 from .dispatcher import Dispatcher
 from .history import OperationHistory
+from . import local_tools
+try:
+    from ..tools.spine import Spine, SpineError
+except ImportError:
+    from tools.spine import Spine, SpineError
 try:
     from ..core.state import ProjectState
     from ..core.tree import scan_project_tree
@@ -52,6 +58,10 @@ except ImportError:
     from core.writes import atomic_write_bytes
     from core.transaction import RecoveryRequiredError, apply_operations, prepare_undo
 
+
+
+BACKGROUND_ACTIONS = frozenset({"command.run", "inference.models", "inference.model_info",
+                                "inference.generate"})
 
 
 def fingerprint(data):
@@ -116,8 +126,13 @@ class Controller:
             "backup.list": self._backup_list, "backup.preview": self._backup_preview,
             "backup.restore": self._backup_restore, "backup.prune_preview": self._backup_prune_preview,
             "backup.prune": self._backup_prune, "history.query": self._history_query,
+            "command.run": self._command_run, "inference.models": self._inference_models,
+            "inference.model_info": self._inference_model_info,
+            "inference.generate": self._inference_generate,
+            "spine.list": self._spine_list, "spine.read": self._spine_read,
+            "spine.append": self._spine_append,
         }.items():
-            self.dispatcher.register(name, handler)
+            self.dispatcher.register(name, handler, background=name in BACKGROUND_ACTIONS)
         for name in ("file.rename", "file.move", "folder.create", "folder.rename",
                      "folder.move", "folder.delete"):
             self.dispatcher.register(name, lambda payload, context, action=name:
@@ -963,8 +978,143 @@ class Controller:
         return collect_diagnostics(SimpleNamespace(selected_root=self.state.root,
             get_output_dir=lambda: self.state.root / OUTPUT_ROOT_NAME))
 
+    # --- local tools (background lane; never exposed to agents) -------------
+
+    def _command_run(self, payload, context):
+        inputs(payload, ("folder", "command"))
+        with self.lock:
+            root = self.state.root
+        folder = Path(payload["folder"]).resolve()
+        if not folder.is_dir():
+            raise ActionError("not_found", f"Folder not found: {folder}")
+        if folder != root and not folder.is_relative_to(root):
+            raise ActionError("unsafe_path", "Commands run only inside the project.")
+        if not isinstance(payload["command"], str) or not payload["command"].strip():
+            raise ActionError("invalid_input", "The command is empty.")
+        return local_tools.run_command(str(folder), payload["command"], context)
+
+    def _inference_models(self, payload, context):
+        inputs(payload, (), ("endpoint",))
+        return local_tools.list_models(payload.get("endpoint"))
+
+    def _inference_model_info(self, payload, context):
+        inputs(payload, ("model",), ("endpoint",))
+        return local_tools.model_info(payload.get("endpoint"), payload["model"])
+
+    def _inference_generate(self, payload, context):
+        inputs(payload, ("model", "prompt"), ("endpoint", "options"))
+        return local_tools.generate(payload.get("endpoint"), payload["model"], payload["prompt"],
+                                    payload.get("options"), context)
+
+    # --- spines -------------------------------------------------------------
+
+    def _spine_file(self, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ActionError("invalid_input", "A spine path is required.")
+        path = Path(value)
+        with self.lock:
+            path = path if path.is_absolute() else self.state.root / path
+        if path.suffix.lower() != ".jsonl":
+            raise ActionError("invalid_input", "Spines are .jsonl files.")
+        if not path.is_file():
+            raise ActionError("not_found", f"No spine at {value}.")
+        return path
+
+    def _spine_list(self, payload, context):
+        inputs(payload, ())
+        with self.lock:
+            root = self.state.root
+        found = []
+        for folder, dirs, files in os.walk(root):
+            context.check_cancelled()
+            dirs[:] = sorted(d for d in dirs if d not in SPINE_SKIP)
+            for name in sorted(files):
+                path = Path(folder) / name
+                if name.lower().endswith(".jsonl") and _looks_like_spine(path):
+                    found.append({"path": path.relative_to(root).as_posix(), "bytes": path.stat().st_size})
+            if len(found) >= SPINE_LIST_LIMIT:
+                break
+        return {"spines": found[:SPINE_LIST_LIMIT], "count": min(len(found), SPINE_LIST_LIMIT),
+                "truncated": len(found) >= SPINE_LIST_LIMIT}
+
+    def _spine_read(self, payload, context):
+        inputs(payload, ("path",), ("schema", "start", "limit"))
+        path = self._spine_file(payload["path"])
+        start, limit = payload.get("start", 0), payload.get("limit", 200)
+        if not all(isinstance(n, int) and not isinstance(n, bool) for n in (start, limit)) \
+                or start < 0 or not 1 <= limit <= 1000:
+            raise ActionError("invalid_input", "start must be 0 or more and limit 1–1000.")
+        spine = Spine.open(path)
+        wanted = payload.get("schema")
+        selected = [(index, record) for index, record in enumerate(spine.read_entries())
+                    if not wanted or record.get("schema") == wanted]
+        page = selected[start:start + limit]
+        end = start + len(page)
+        return {"path": str(path),
+                "schemas": {key: spine.load_schema(key) for key in spine.list_schemas()},
+                "entries": [{"index": index, **{k: v for k, v in record.items() if k != "kind"}}
+                            for index, record in page],
+                "count": len(selected), "start": start, "next": end if end < len(selected) else None}
+
+    def _spine_append(self, payload, context):
+        inputs(payload, ("path", "schema", "data"))
+        path = self._spine_file(payload["path"])
+        spine = Spine.open(path)
+        try:
+            definition = spine.load_schema(payload["schema"])
+        except SpineError as exc:
+            raise ActionError("invalid_input", f"{exc} in {path.name}.") from exc
+        _check_entry(definition, payload["data"])
+        context.check_cancelled()
+        spine.append_entry(payload["schema"], payload["data"])
+        return {"path": str(path), "paths": [str(path)], "index": len(spine.read_entries()) - 1}
+
     def close(self):
         self.dispatcher.close()
+
+
+SPINE_SKIP = frozenset({".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__",
+                        ".pytest_cache", ".mypy_cache", ".ruff_cache", OUTPUT_ROOT_NAME})
+SPINE_LIST_LIMIT = 500
+_JSON_TYPES = {"string": str, "integer": int, "number": (int, float), "boolean": bool,
+               "array": list, "object": dict}
+
+
+def _looks_like_spine(path):
+    """An empty file or one whose first record is a spine schema/entry record."""
+    try:
+        with path.open("r", encoding="utf-8-sig", errors="replace") as handle:
+            for line in handle:
+                if line.strip():
+                    record = json.loads(line)
+                    return isinstance(record, dict) and record.get("kind") in ("schema", "entry")
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _check_entry(definition, data):
+    """Check an entry against its schema's declared properties before it is appended."""
+    if not isinstance(data, dict):
+        raise ActionError("invalid_input", "Entry data must be an object.")
+    properties = definition.get("properties")
+    if not isinstance(properties, dict):
+        return
+    unknown = sorted(set(data) - set(properties))
+    if unknown:
+        raise ActionError("invalid_input", f"Fields not in the schema: {', '.join(unknown)}.")
+    missing = [key for key in definition.get("required") or () if key not in data]
+    if missing:
+        raise ActionError("invalid_input", f"Required fields missing: {', '.join(missing)}.")
+    for key, value in data.items():
+        spec = properties[key] if isinstance(properties[key], dict) else {}
+        kind = spec.get("type")
+        expected = _JSON_TYPES.get(kind)
+        if expected and (not isinstance(value, expected)
+                         or (kind in ("integer", "number") and isinstance(value, bool))):
+            raise ActionError("invalid_input", f"{key} must be {kind}.")
+        if isinstance(spec.get("enum"), list) and value not in spec["enum"]:
+            raise ActionError("invalid_input", f"{key} must be one of: {', '.join(map(str, spec['enum']))}.")
 
 
 def create_application(root, dispatcher=None):

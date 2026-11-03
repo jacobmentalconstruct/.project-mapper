@@ -52,6 +52,8 @@ The app opens and automatically targets the project it is installed in.
 | SQLite snapshot | Compiles tree + file contents into a queryable database |
 | Markdown export | Tree, filedump, or combined — paste directly into an AI chat |
 | SchemaTOUCHER | Schema-driven JSONL journal: register schemas, append entries, browse |
+| Run Command | Run shell commands in any project folder and stream output |
+| Inference | Send prompts to a local Ollama model; chain steps, cascade, inspect history |
 | MCP / CLI adapter | Agents can drive ProjectMapper over JSON-RPC or subprocess |
 
 ---
@@ -106,7 +108,7 @@ Open SchemaTOUCHER from the Tools menu inside ProjectMapper.
 Run actions from the command line:
 
 ```sh
-.project-mapper/run.sh <project-folder> --action scan
+.project-mapper/run.sh <project-folder> scan
 ```
 
 Start the MCP server for agent integration:

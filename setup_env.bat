@@ -14,6 +14,7 @@ echo [SYSTEM] Installing dependencies...
 if exist "%SCRIPT_DIR%\requirements.txt" (
     "%SCRIPT_DIR%\.venv\Scripts\pip" install -r "%SCRIPT_DIR%\requirements.txt"
 )
+"%SCRIPT_DIR%\.venv\Scripts\pip" install -e "%SCRIPT_DIR%[dev]"
 
 echo.
 echo [SUCCESS] Environment ready. Launch with run.bat

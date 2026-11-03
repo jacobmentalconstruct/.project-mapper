@@ -2338,16 +2338,6 @@ class ProjectMapperApp:
     def export_vendor_app(self):
         self.run_threaded_action(self._export_vendor_app_impl, "vendor_export", use_popup=True)
 
-    def export_sidecar_app(self):
-        self.run_threaded_action(self._export_sidecar_app_impl, "sidecar_export", use_popup=True)
-
-    def _export_sidecar_app_impl(self):
-        result = create_sidecar_export(log_callback=self.schedule_log_message)
-        if result.get("zip_path"):
-            self.schedule_log_message(f"Sidecar ZIP ready: {result['zip_path']}")
-        else:
-            self.schedule_log_message(f"Sidecar export ready: {result['export_name']} ({result['included_count']} files)")
-
     def _export_vendor_app_impl(self):
         result = self.action("vendor.export")
         self.schedule_log_message(

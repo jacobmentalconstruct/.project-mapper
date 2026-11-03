@@ -1,7 +1,0 @@
-{
-  "event_time": "2026-10-31",
-  "event_type": "implementation",
-  "summary": "Minimal spine CLI (spine_cli.py) implemented. Four subcommands: init <path>, register <path> --schema <file.json>, append <path> --schema <id@version> --data <file.json>, read <path> [--kind entry|schema|all]. Entry point spine-cli added to pyproject.toml.",
-  "decision_or_outcome": "CLI calls spine.py directly. Errors go to stderr; exit code 1 on failure. read outputs JSONL to stdout (one record per line). Status messages (created/registered/appended) go to stderr. No ambient state, no additional persistence. Round-trip verified: CLI-created spine opens correctly in SchemaTOUCHER. All 55 existing tests still pass.",
-  "open_questions": ""
-}

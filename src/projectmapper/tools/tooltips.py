@@ -142,6 +142,7 @@ TOOLTIPS = {
     "inference.spine_browse": "Select a SchemaTOUCHER spine file to use as context for this inference step.",
     "inference.spine_preview": "Preview the assembled prompt including spine context, prior response, and your prompt.",
     "inference.cascade": "When checked, Run continues through all subsequent steps to the end of the chain.",
+    "inference.record": "Append every run (submitted prompt, model, options, result or error) to _spine/inference-runs.jsonl in the project.",
     "nav.add_step": "Append a new step to the end of the chain.",
     "nav.run_step": "Run the selected step, executing any unrun ancestors first.",
     "nav.run_to_end": "Run the selected step and cascade through all subsequent steps.",

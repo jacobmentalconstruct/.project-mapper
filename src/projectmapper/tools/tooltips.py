@@ -139,6 +139,8 @@ TOOLTIPS = {
     "inference.stop": "Cancel the active inference request.",
     "inference.clear": "Clear the prompt and response areas.",
     "inference.navigator": "Open the Chain Navigator to see all steps, their status, and run or cascade from a central panel.",
+    "inference.spine_browse": "Select a SchemaTOUCHER spine file to use as context for this inference step.",
+    "inference.spine_preview": "Preview the assembled prompt including spine context, prior response, and your prompt.",
     "inference.cascade": "When checked, Run continues through all subsequent steps to the end of the chain.",
     "nav.add_step": "Append a new step to the end of the chain.",
     "nav.run_step": "Run the selected step, executing any unrun ancestors first.",

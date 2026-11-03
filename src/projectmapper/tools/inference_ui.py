@@ -9,9 +9,13 @@ from pathlib import Path
 if __package__:
     from .ui_base import ToolWindowMixin, attach_tooltip
     from .inference import OllamaClient
+    from .inference_spine import resolve_entries, SpineContextError
+    from .inference_assembler import assemble_prompt, freeze_request, AssemblyError, InferenceRequest
 else:
     from ui_base import ToolWindowMixin, attach_tooltip
     from inference import OllamaClient
+    from inference_spine import resolve_entries, SpineContextError
+    from inference_assembler import assemble_prompt, freeze_request, AssemblyError, InferenceRequest
 
 
 def _inference_config_path() -> Path:
@@ -78,9 +82,19 @@ class InferenceWindow(ToolWindowMixin):
         self._context_path = context_path
         self._config = _load_inference_config()
 
-        # Current result and history.
-        self._last_response: str = ""
-        self._history: list[str] = []
+        # Current committed result and execution history.
+        self._last_response: str = ""      # committed after successful run
+        self._execution_records: list[dict] = []
+
+        # Spine context selection (optional).
+        self._spine_path: str = ""         # path as string; empty = no spine
+        self._spine_indices: list[int] = []
+
+        # Frozen request for the latest attempt.
+        self._frozen_request: "InferenceRequest | None" = None
+
+        # Saved prior result while a run is in-flight (for failure restore).
+        self._pending_prior: str = ""
 
         # Chain-wide busy lock — only the root's value is authoritative.
         self._chain_busy: bool = False
@@ -97,11 +111,12 @@ class InferenceWindow(ToolWindowMixin):
         )
         self.top.protocol("WM_DELETE_WINDOW", self.close)
         self.top.columnconfigure(0, weight=1)
-        self.top.rowconfigure(3, weight=1)
+        self.top.rowconfigure(4, weight=1)
 
         self._build_connection_row()
         self._build_model_row()
         self._build_config_row()
+        self._build_context_row()
         self._build_prompt_row()
         self._build_response_area()
         self._build_status_bar()
@@ -232,14 +247,132 @@ class InferenceWindow(ToolWindowMixin):
             self._config_toggle_btn.config(text="▶ Inference options")
             self._config_frame.grid_forget()
 
+    # ── spine context row (collapsible) ───────────────────────────────────
+
+    def _build_context_row(self):
+        self._context_expanded = tk.BooleanVar(value=False)
+
+        toggle_row = self.frame(self.top)
+        toggle_row.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 0))
+
+        self._context_toggle_btn = tk.Button(
+            toggle_row, text="▶ Spine context",
+            bg=self.colors["panel_bg"], fg=self.colors["muted_text"],
+            relief=tk.FLAT, bd=0, font=("Arial", 9), cursor="hand2",
+            activebackground=self.colors["panel_bg"],
+            activeforeground=self.colors["text"],
+            command=self._toggle_context,
+        )
+        self._context_toggle_btn.pack(side=tk.LEFT, padx=6, pady=2)
+
+        self._context_frame = self.frame(self.top)
+        cf = self._context_frame
+        cf.columnconfigure(1, weight=1)
+
+        self.label(cf, text="Spine:", panel=True, font=("Arial", 9)).grid(
+            row=0, column=0, padx=(8, 2), pady=3, sticky="w"
+        )
+        self._spine_path_var = tk.StringVar(value="")
+        spine_entry = tk.Entry(
+            cf, textvariable=self._spine_path_var,
+            font=("Consolas", 9), relief="flat",
+            bg=self.colors["field_bg"], fg=self.colors["field_text"],
+            insertbackground=self.colors["text"],
+        )
+        spine_entry.grid(row=0, column=1, sticky="ew", padx=(2, 4), pady=3)
+
+        self.button(cf, "Browse", self._browse_spine,
+                    tooltip_id="inference.spine_browse").grid(
+            row=0, column=2, padx=(2, 8), pady=3
+        )
+
+        self.label(cf, text="Entries:", panel=True, font=("Arial", 9)).grid(
+            row=1, column=0, padx=(8, 2), pady=3, sticky="w"
+        )
+        self._spine_indices_var = tk.StringVar(value="")
+        tk.Entry(
+            cf, textvariable=self._spine_indices_var,
+            font=("Consolas", 9), relief="flat",
+            bg=self.colors["field_bg"], fg=self.colors["field_text"],
+            insertbackground=self.colors["text"],
+        ).grid(row=1, column=1, sticky="ew", padx=(2, 4), pady=3)
+        self.label(cf, text="(comma-separated indices, e.g. 0,2,5)",
+                   panel=True, font=("Arial", 8)).grid(
+            row=1, column=2, padx=(2, 8), pady=3, sticky="w"
+        )
+
+        self.button(cf, "Preview Context", self._preview_context,
+                    tooltip_id="inference.spine_preview").grid(
+            row=2, column=1, padx=(2, 4), pady=(2, 4), sticky="w"
+        )
+
+    def _toggle_context(self):
+        expanded = not self._context_expanded.get()
+        self._context_expanded.set(expanded)
+        if expanded:
+            self._context_toggle_btn.config(text="▼ Spine context")
+            self._context_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 2))
+        else:
+            self._context_toggle_btn.config(text="▶ Spine context")
+            self._context_frame.grid_forget()
+
+    def _browse_spine(self):
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(
+            title="Select spine file",
+            filetypes=[("Spine files", "*.jsonl"), ("All files", "*.*")],
+        )
+        if path:
+            self._spine_path_var.set(path)
+
+    def _get_spine_entries(self) -> list:
+        """Parse _spine_path_var + _spine_indices_var → resolved entries, or []."""
+        path = self._spine_path_var.get().strip()
+        idx_str = self._spine_indices_var.get().strip()
+        if not path or not idx_str:
+            return []
+        try:
+            indices = [int(x.strip()) for x in idx_str.split(",") if x.strip()]
+        except ValueError:
+            raise SpineContextError("Entry indices must be comma-separated integers (e.g. 0,2,5).")
+        return resolve_entries(path, indices)
+
+    def _preview_context(self):
+        try:
+            entries = self._get_spine_entries()
+        except SpineContextError as exc:
+            self._status_bar_var.set(f"Spine error: {exc}")
+            return
+        try:
+            prior = self._chain_parent._last_response.strip() if self._chain_parent else ""
+            user = self._prompt_text.get("1.0", tk.END).strip()
+            text = assemble_prompt(entries, prior, user,
+                                   prior_first=(self._chain_order == "before"))
+        except AssemblyError as exc:
+            self._status_bar_var.set(f"Assembly: {exc}")
+            return
+        win = tk.Toplevel(self.top)
+        win.title("Context Preview")
+        win.geometry("600x420")
+        win.configure(bg=self.colors["panel_bg"])
+        win.transient(self.top)
+        box = self.editor(win)
+        box.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        ToolWindowMixin.show_text(box, text)
+        tk.Button(
+            win, text="Close", command=win.destroy,
+            bg=self.colors["panel_alt_bg"], fg=self.colors["text"],
+            relief=tk.FLAT, padx=12, pady=4,
+        ).pack(pady=(0, 8))
+
     # ── prompt row ────────────────────────────────────────────────────────
 
     def _build_prompt_row(self):
         outer = self.frame(self.top)
-        outer.grid(row=3, column=0, sticky="nsew", padx=10, pady=(4, 2))
+        outer.grid(row=4, column=0, sticky="nsew", padx=10, pady=(4, 2))
         outer.columnconfigure(0, weight=1)
         outer.rowconfigure(1, weight=1)
-        self.top.rowconfigure(3, weight=1)
+        self.top.rowconfigure(4, weight=1)
 
         hdr = self.frame(outer)
         hdr.grid(row=0, column=0, sticky="ew")
@@ -347,10 +480,10 @@ class InferenceWindow(ToolWindowMixin):
 
     def _build_response_area(self):
         outer = self.frame(self.top)
-        outer.grid(row=4, column=0, sticky="nsew", padx=10, pady=(2, 4))
+        outer.grid(row=5, column=0, sticky="nsew", padx=10, pady=(2, 4))
         outer.columnconfigure(0, weight=1)
         outer.rowconfigure(1, weight=1)
-        self.top.rowconfigure(4, weight=2)
+        self.top.rowconfigure(5, weight=2)
 
         self.label(outer, text="Response", panel=True, font=("Arial", 9, "bold")).grid(
             row=0, column=0, sticky="w", padx=6, pady=2,
@@ -379,7 +512,7 @@ class InferenceWindow(ToolWindowMixin):
             self.top, textvariable=self._status_bar_var,
             bg=self.colors["status_bg"], fg=self.colors["status_text"],
             anchor="w", padx=8, font=("Arial", 9),
-        ).grid(row=5, column=0, sticky="ew")
+        ).grid(row=6, column=0, sticky="ew")
 
     # ── async helpers ─────────────────────────────────────────────────────
 
@@ -522,19 +655,6 @@ class InferenceWindow(ToolWindowMixin):
         child.top.lift()
         child.top.focus_force()
 
-    def _compose_prompt(self) -> str | None:
-        """Return the combined prompt for this step, or None if parent has no result."""
-        own = self._prompt_text.get("1.0", tk.END).strip()
-        if self._chain_parent is None:
-            return own
-        parent_response = self._chain_parent._last_response.strip()
-        if not parent_response:
-            return None
-        sep = "\n\n---\n\n"
-        if self._chain_order == "before":
-            return parent_response + sep + own
-        return own + sep + parent_response
-
     # ── run / stop ────────────────────────────────────────────────────────
 
     def _get_options(self) -> dict | None:
@@ -578,15 +698,8 @@ class InferenceWindow(ToolWindowMixin):
                 queue.append(child)
                 child = child._chain_child
 
-        # Immediately clear current results of all steps after self.
-        # (Subsequent steps in the queue will fill them; others stay empty.)
-        node_c: InferenceWindow | None = self._chain_child
-        while node_c is not None and node_c.top.winfo_exists():
-            if node_c._last_response:
-                node_c._last_response = ""
-                ToolWindowMixin.show_text(node_c._response_box, "")
-                node_c._status_bar_var.set("Cleared — waiting for earlier step.")
-            node_c = node_c._chain_child
+        # Descendant invalidation happens only after a successful commit
+        # (see _invalidate_descendants), not here.
 
         # Lock the chain and disable Run on all nodes.
         root._chain_busy = True
@@ -619,36 +732,57 @@ class InferenceWindow(ToolWindowMixin):
 
     def _execute(self, on_finished):
         model = self._model_var.get().strip()
-        prompt = self._compose_prompt()
         if not model:
             self._status_bar_var.set("Choose a model first.")
             on_finished(False)
             return
-        if prompt is None:
-            self._status_bar_var.set(f"Step {self._step - 1} has no result to inject.")
-            on_finished(False)
-            return
-        if not prompt:
-            self._status_bar_var.set(f"Enter a prompt in Step {self._step}.")
+
+        # Resolve spine entries (may be empty — no-spine path unchanged).
+        try:
+            entries = self._get_spine_entries()
+        except SpineContextError as exc:
+            self._status_bar_var.set(f"Spine error: {exc}")
             on_finished(False)
             return
 
-        # Preserve current result in history before replacing it.
-        if self._last_response:
-            self._history.append(self._last_response)
+        # Chain: require parent result if one exists.
+        prior = ""
+        if self._chain_parent is not None:
+            prior = self._chain_parent._last_response.strip()
+            if not prior:
+                self._status_bar_var.set(
+                    f"Step {self._chain_parent._step} has no result to inject."
+                )
+                on_finished(False)
+                return
 
+        user_prompt = self._prompt_text.get("1.0", tk.END).strip()
+
+        # Assemble and freeze — explicit error if empty.
+        try:
+            assembled = assemble_prompt(
+                entries, prior, user_prompt,
+                prior_first=(self._chain_order == "before"),
+            )
+            req = freeze_request(model, assembled, self._get_options())
+        except AssemblyError as exc:
+            self._status_bar_var.set(str(exc))
+            on_finished(False)
+            return
+
+        # Save prior result so a failed run can restore it.
+        self._pending_prior = self._last_response
+        self._frozen_request = req
         self._on_finished = on_finished
         self._stop_event.clear()
-        self._last_response = ""
-        self._token_buf: list[str] = []
+        self._token_buf = []
         self.set_button_enabled(self._stop_btn, True, "danger")
         self._status_bar_var.set(f"Running step {self._step} · {model}…")
         ToolWindowMixin.show_text(self._response_box, "")
 
-        options = self._get_options()
         self._active_thread = threading.Thread(
             target=self._client.generate,
-            args=(model, prompt, options,
+            args=(req.model, req.prompt, req.options,
                   self._on_token, self._on_done, self._on_error,
                   self._stop_event),
             daemon=True,
@@ -675,27 +809,66 @@ class InferenceWindow(ToolWindowMixin):
         self.top.after(0, lambda: self._finish(meta))
 
     def _finish(self, meta: dict):
-        self._last_response = "".join(self._token_buf)
         stopped = meta.get("stopped")
-        ok = not stopped
-        if self.top.winfo_exists():
-            self.set_button_enabled(self._stop_btn, False, "danger")
-            elapsed = meta.get("elapsed_s", 0)
-            rtok = meta.get("response_tokens")
-            ptok = meta.get("prompt_tokens")
-            parts = ["Stopped" if stopped else "Done", f"{elapsed}s"]
-            if rtok is not None:
-                parts.append(f"{rtok} response tokens")
-            if ptok is not None:
-                parts.append(f"{ptok} prompt tokens")
-            self._status_bar_var.set(" · ".join(parts))
-        self._complete(ok)
+        response = "".join(self._token_buf)
+        if stopped:
+            # Cancelled — preserve prior result; record failure.
+            self._last_response = self._pending_prior
+            self._execution_records.append({
+                "model": self._frozen_request.model if self._frozen_request else "",
+                "options": self._frozen_request.options if self._frozen_request else None,
+                "prompt": self._frozen_request.prompt if self._frozen_request else "",
+                "status": "stopped",
+                "response": response,
+                "error": None,
+                "elapsed_s": meta.get("elapsed_s", 0),
+            })
+            if self.top.winfo_exists():
+                self.set_button_enabled(self._stop_btn, False, "danger")
+                self._status_bar_var.set(
+                    f"Stopped · {meta.get('elapsed_s', 0)}s — prior result preserved."
+                )
+        else:
+            # Success — commit new result and invalidate descendants.
+            self._last_response = response
+            self._execution_records.append({
+                "model": self._frozen_request.model if self._frozen_request else "",
+                "options": self._frozen_request.options if self._frozen_request else None,
+                "prompt": self._frozen_request.prompt if self._frozen_request else "",
+                "status": "success",
+                "response": response,
+                "error": None,
+                "elapsed_s": meta.get("elapsed_s", 0),
+            })
+            self._invalidate_descendants()
+            if self.top.winfo_exists():
+                self.set_button_enabled(self._stop_btn, False, "danger")
+                elapsed = meta.get("elapsed_s", 0)
+                rtok = meta.get("response_tokens")
+                ptok = meta.get("prompt_tokens")
+                parts = ["Done", f"{elapsed}s"]
+                if rtok is not None:
+                    parts.append(f"{rtok} response tokens")
+                if ptok is not None:
+                    parts.append(f"{ptok} prompt tokens")
+                self._status_bar_var.set(" · ".join(parts))
+        self._complete(not stopped)
 
     def _on_error(self, message: str):
         self.top.after(0, lambda: self._show_error(message))
 
     def _show_error(self, message: str):
-        self._last_response = "".join(self._token_buf)
+        # Failure — preserve prior result; record error.
+        self._last_response = self._pending_prior
+        self._execution_records.append({
+            "model": self._frozen_request.model if self._frozen_request else "",
+            "options": self._frozen_request.options if self._frozen_request else None,
+            "prompt": self._frozen_request.prompt if self._frozen_request else "",
+            "status": "error",
+            "response": None,
+            "error": message,
+            "elapsed_s": 0,
+        })
         if self.top.winfo_exists():
             self.set_button_enabled(self._stop_btn, False, "danger")
             lower = message.lower()
@@ -707,6 +880,16 @@ class InferenceWindow(ToolWindowMixin):
             else:
                 self._status_bar_var.set(f"Error: {message}")
         self._complete(False)
+
+    def _invalidate_descendants(self):
+        """Clear committed current result of all live descendants after a successful commit."""
+        node: "InferenceWindow | None" = self._chain_child
+        while node is not None and node.top.winfo_exists():
+            if node._last_response:
+                node._last_response = ""
+                ToolWindowMixin.show_text(node._response_box, "")
+                node._status_bar_var.set("Cleared — ancestor result changed.")
+            node = node._chain_child
 
     def _complete(self, ok: bool):
         callback, self._on_finished = self._on_finished, None

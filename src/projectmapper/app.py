@@ -1071,13 +1071,16 @@ class ProjectMapperApp:
         root_node = chain_root or getattr(self, "inference_window", None)
         if root_node is None or not root_node.top.winfo_exists():
             return None
-        existing = getattr(self, "chain_navigator", None)
+        navigators = getattr(self, "_chain_navigators", {})
+        existing = navigators.get(id(root_node))
         if existing is not None and existing.top.winfo_exists():
             existing.top.deiconify()
             existing.top.lift()
             return existing
-        self.chain_navigator = ChainNavigatorWindow(self, root_node)
-        return self.chain_navigator
+        nav = ChainNavigatorWindow(self, root_node)
+        navigators[id(root_node)] = nav
+        self._chain_navigators = navigators
+        return nav
 
     def open_project_patcher(self, folder):
         try:

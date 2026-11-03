@@ -252,9 +252,10 @@ class InferenceWindow(ToolWindowMixin):
                 panel=True, font=("Arial", 9),
             ).pack(side=tk.LEFT, padx=4)
 
+        parent_step = self._chain_parent._step if self._chain_parent is not None else self._step - 1
         self._placeholder_before = tk.Label(
             outer,
-            text=f"⬆  Step {self._step - 1} response will be prepended here",
+            text=f"⬆  Step {parent_step} response will be prepended here",
             bg=self.colors["panel_alt_bg"], fg=self.colors["muted_text"],
             font=("Arial", 9, "italic"), anchor="w", padx=8, pady=4,
         )
@@ -272,7 +273,7 @@ class InferenceWindow(ToolWindowMixin):
 
         self._placeholder_after = tk.Label(
             outer,
-            text=f"⬇  Step {self._step - 1} response will be appended here",
+            text=f"⬇  Step {parent_step} response will be appended here",
             bg=self.colors["panel_alt_bg"], fg=self.colors["muted_text"],
             font=("Arial", 9, "italic"), anchor="w", padx=8, pady=4,
         )
@@ -389,8 +390,7 @@ class InferenceWindow(ToolWindowMixin):
         threading.Thread(target=self._bg_refresh_models, daemon=True).start()
 
     def _bg_refresh_models(self):
-        status = self._client.check_status()
-        models = self._client.list_models() if status["ok"] else []
+        status, models = self._client.check_and_list()
         self.top.after(0, lambda: self._apply_refresh(status, models))
 
     def _apply_refresh(self, status, models):
@@ -538,8 +538,6 @@ class InferenceWindow(ToolWindowMixin):
     # ── run / stop ────────────────────────────────────────────────────────
 
     def _get_options(self) -> dict | None:
-        if not self._config_expanded.get():
-            return None
         try:
             opts: dict = {}
             opts["temperature"] = float(self._temp_var.get())
@@ -642,6 +640,7 @@ class InferenceWindow(ToolWindowMixin):
         self._on_finished = on_finished
         self._stop_event.clear()
         self._last_response = ""
+        self._token_buf: list[str] = []
         self.set_button_enabled(self._stop_btn, True, "danger")
         self._status_bar_var.set(f"Running step {self._step} · {model}…")
         ToolWindowMixin.show_text(self._response_box, "")
@@ -661,7 +660,7 @@ class InferenceWindow(ToolWindowMixin):
         self._stop_event.set()
 
     def _on_token(self, token: str):
-        self._last_response += token
+        self._token_buf.append(token)
         self.top.after(0, lambda: self._append_token(token))
 
     def _append_token(self, token: str):
@@ -676,6 +675,7 @@ class InferenceWindow(ToolWindowMixin):
         self.top.after(0, lambda: self._finish(meta))
 
     def _finish(self, meta: dict):
+        self._last_response = "".join(self._token_buf)
         stopped = meta.get("stopped")
         ok = not stopped
         if self.top.winfo_exists():
@@ -695,6 +695,7 @@ class InferenceWindow(ToolWindowMixin):
         self.top.after(0, lambda: self._show_error(message))
 
     def _show_error(self, message: str):
+        self._last_response = "".join(self._token_buf)
         if self.top.winfo_exists():
             self.set_button_enabled(self._stop_btn, False, "danger")
             lower = message.lower()
@@ -723,6 +724,8 @@ class InferenceWindow(ToolWindowMixin):
         self._stop_event.set()
         if self._chain_parent is not None and self._chain_parent._chain_child is self:
             self._chain_parent._chain_child = None
+        if self._chain_child is not None and self._chain_child.top.winfo_exists():
+            self._chain_child._chain_parent = self._chain_parent
         try:
             self.top.destroy()
         except tk.TclError:

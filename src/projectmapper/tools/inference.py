@@ -27,27 +27,28 @@ class OllamaClient:
 
     def check_status(self) -> dict:
         """Return {"ok": bool, "message": str}."""
+        status, _ = self.check_and_list()
+        return status
+
+    def check_and_list(self) -> tuple[dict, list[str]]:
+        """Single /api/tags round-trip returning (status, model_names)."""
         try:
             req = urllib.request.Request(self.endpoint + "/api/tags", method="GET")
             with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
-                resp.read()
-            return {"ok": True, "message": "Connected"}
+                data = json.loads(resp.read())
+            models = sorted(m["name"] for m in data.get("models", []))
+            return {"ok": True, "message": "Connected"}, models
         except urllib.error.URLError as exc:
-            return {"ok": False, "message": str(exc.reason)}
+            return {"ok": False, "message": str(exc.reason)}, []
         except Exception as exc:
-            return {"ok": False, "message": str(exc)}
+            return {"ok": False, "message": str(exc)}, []
 
     # ── model listing ─────────────────────────────────────────────────────────
 
     def list_models(self) -> list[str]:
         """Return sorted model name strings, or [] on failure."""
-        try:
-            req = urllib.request.Request(self.endpoint + "/api/tags", method="GET")
-            with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
-                data = json.loads(resp.read())
-            return sorted(m["name"] for m in data.get("models", []))
-        except Exception:
-            return []
+        _, models = self.check_and_list()
+        return models
 
     def model_info(self, model: str) -> dict:
         """Return raw model metadata dict, or {} on failure."""
@@ -93,7 +94,7 @@ class OllamaClient:
                 self.endpoint + "/api/generate", data=encoded, method="POST",
                 headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(req, timeout=None) as resp:
+            with urllib.request.urlopen(req, timeout=300) as resp:
                 for raw_line in resp:
                     if stop_event.is_set():
                         break

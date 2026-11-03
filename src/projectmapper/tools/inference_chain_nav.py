@@ -32,6 +32,7 @@ class ChainNavigatorWindow(ToolWindowMixin):
         self.top.rowconfigure(1, weight=1)
 
         self._nodes: list = []
+        self._last_rows: list = []
         self._build_ui()
         self._poll()
 
@@ -107,7 +108,6 @@ class ChainNavigatorWindow(ToolWindowMixin):
         sel = self._lb.curselection()
         prev_idx = sel[0] if sel else None
 
-        self._lb.delete(0, tk.END)
         c = self.colors
         status_colors = {
             "running": c.get("success", c["text"]),
@@ -116,13 +116,19 @@ class ChainNavigatorWindow(ToolWindowMixin):
             "empty":   c.get("muted_text", c["text"]),
         }
 
-        for i, node in enumerate(nodes):
+        rows = []
+        for node in nodes:
             status = _node_status(node)
             prompt = node._prompt_text.get("1.0", "end-1c").strip().replace("\n", " ")
             preview = (prompt[:34] + "…") if len(prompt) > 34 else (prompt or "(no prompt)")
-            entry = f"  {node._step}  [{status:7s}]  {preview}"
-            self._lb.insert(tk.END, entry)
-            self._lb.itemconfigure(i, fg=status_colors.get(status, c["text"]))
+            rows.append((node._step, status, preview))
+
+        if rows != self._last_rows:
+            self._last_rows = rows
+            self._lb.delete(0, tk.END)
+            for i, (step, status, preview) in enumerate(rows):
+                self._lb.insert(tk.END, f"  {step}  [{status:7s}]  {preview}")
+                self._lb.itemconfigure(i, fg=status_colors.get(status, c["text"]))
 
         if prev_idx is not None and prev_idx < len(nodes):
             self._lb.selection_set(prev_idx)
@@ -160,9 +166,10 @@ class ChainNavigatorWindow(ToolWindowMixin):
 
     def _add_step(self):
         """Append a new step to the end of the chain."""
-        if not self._nodes:
+        nodes = self._root._all_chain_nodes()
+        if not nodes:
             return
-        last = self._nodes[-1]
+        last = nodes[-1]
         if not last.top.winfo_exists():
             return
         if not last._chain_var.get():

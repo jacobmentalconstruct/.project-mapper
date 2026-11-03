@@ -50,8 +50,7 @@ approval for writes. See [the integration guide](docs/agent-integration.md).
 ## 1.0.0 — 2026-09-25
 
 The first stable release. Every shared action has a documented contract
-([docs/developer-guide.md](docs/developer-guide.md)), and every desktop control is covered by
-an automated test ([docs/ui-map.md](docs/ui-map.md)).
+in the developer guide, and every desktop control is covered by an automated test.
 
 ### Added
 
@@ -74,8 +73,9 @@ an automated test ([docs/ui-map.md](docs/ui-map.md)).
 - The text editor has a **Keep backup** option for Save and for Save As over an
   existing file (`text.save_as` accepts an optional `backup` flag).
 - Developer documentation: every action's payload, approvals, events, error codes and
-  history ([docs/developer-guide.md](docs/developer-guide.md)), and a map of every
-  desktop control to the test that drives it ([docs/ui-map.md](docs/ui-map.md)).
+  history, and a map of every desktop control to the test that drives it. (These
+  development documents are kept with the maintainers' local records, not in the
+  distributed repository.)
 
 ### Changed
 

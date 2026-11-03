@@ -138,7 +138,11 @@ TOOLTIPS = {
     "inference.run": "Send the prompt to the selected model and stream the response.",
     "inference.stop": "Cancel the active inference request.",
     "inference.clear": "Clear the prompt and response areas.",
+    "inference.navigator": "Open the Chain Navigator to see all steps, their status, and run or cascade from a central panel.",
     "inference.cascade": "When checked, Run continues through all subsequent steps to the end of the chain.",
+    "nav.add_step": "Append a new step to the end of the chain.",
+    "nav.run_step": "Run the selected step, executing any unrun ancestors first.",
+    "nav.run_to_end": "Run the selected step and cascade through all subsequent steps.",
     "inference.chain": "When checked, the next submit passes the last response into a new window.",
     "inference.chain_order": "Before: previous response comes first. After: new prompt comes first.",
 }

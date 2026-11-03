@@ -144,7 +144,11 @@ class InferenceWindow(ToolWindowMixin):
 
         self.button(
             row, "Refresh", self._async_refresh_models, tooltip_id="inference.refresh_models"
-        ).grid(row=0, column=4, padx=(4, 6), pady=4)
+        ).grid(row=0, column=4, padx=(4, 2), pady=4)
+
+        self.button(
+            row, "Navigator", self._open_navigator, tooltip_id="inference.navigator"
+        ).grid(row=0, column=5, padx=(2, 6), pady=4)
 
     # ── model row ─────────────────────────────────────────────────────────
 
@@ -481,6 +485,9 @@ class InferenceWindow(ToolWindowMixin):
         threading.Thread(target=_bg, daemon=True).start()
 
     # ── chain helpers ─────────────────────────────────────────────────────
+
+    def _open_navigator(self):
+        self.app.open_chain_navigator(self._chain_root())
 
     def _chain_root(self) -> "InferenceWindow":
         node = self

@@ -15,6 +15,7 @@ _MODULES = {
     "RunCommandWindow": "run_command",
     "OllamaClient": "inference",
     "InferenceWindow": "inference_ui",
+    "ChainNavigatorWindow": "inference_chain_nav",
 }
 
 
@@ -31,5 +32,5 @@ __all__ = [
     "apply_patch_text", "create_text_file", "file_name", "project_patch_diff", "validate_target",
     "SchemaToucherWindow",
     "RunCommandWindow",
-    "OllamaClient", "InferenceWindow",
+    "OllamaClient", "InferenceWindow", "ChainNavigatorWindow",
 ]

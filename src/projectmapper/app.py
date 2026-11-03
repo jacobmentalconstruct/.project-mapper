@@ -23,7 +23,7 @@ if __package__:
     from .tools import (PatchError, validate_target, PatcherWindow,
                         TextToucherWindow, TextEditorWindow, ProjectPatcherWindow, BackupsWindow,
                         HistoryWindow, SettingsWindow, SchemaToucherWindow, RunCommandWindow,
-                        InferenceWindow)
+                        InferenceWindow, ChainNavigatorWindow)
     from .tools.ui_base import attach_tooltip
     from .core import format_diagnostics, scan_project_tree
 else:
@@ -31,7 +31,7 @@ else:
     from tools import (PatchError, validate_target, PatcherWindow,
                        TextToucherWindow, TextEditorWindow, ProjectPatcherWindow, BackupsWindow,
                        HistoryWindow, SettingsWindow, SchemaToucherWindow, RunCommandWindow,
-                       InferenceWindow)
+                       InferenceWindow, ChainNavigatorWindow)
     from tools.ui_base import attach_tooltip
     from core import format_diagnostics, scan_project_tree
 
@@ -1065,6 +1065,19 @@ class ProjectMapperApp:
             return existing
         self.inference_window = InferenceWindow(self, context_path=context_path)
         return self.inference_window
+
+    def open_chain_navigator(self, chain_root=None):
+        """Open or raise the Chain Navigator for the given chain root."""
+        root_node = chain_root or getattr(self, "inference_window", None)
+        if root_node is None or not root_node.top.winfo_exists():
+            return None
+        existing = getattr(self, "chain_navigator", None)
+        if existing is not None and existing.top.winfo_exists():
+            existing.top.deiconify()
+            existing.top.lift()
+            return existing
+        self.chain_navigator = ChainNavigatorWindow(self, root_node)
+        return self.chain_navigator
 
     def open_project_patcher(self, folder):
         try:

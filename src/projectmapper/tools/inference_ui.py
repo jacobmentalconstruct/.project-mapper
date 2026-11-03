@@ -224,6 +224,7 @@ class InferenceWindow(ToolWindowMixin):
             relief=tk.FLAT, padx=8, pady=6,
         )
         attach_tooltip(self._prompt_text, "inference.prompt", self.colors)
+        self._prompt_text.bind("<Alt-Return>", lambda _e: (self._run(), "break")[1])
         self._prompt_text.grid(row=1, column=0, sticky="nsew")
 
         btn_row = self.frame(outer)

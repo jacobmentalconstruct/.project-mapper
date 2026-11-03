@@ -15,7 +15,6 @@ else:
 
 
 def _inference_config_path() -> Path:
-    """Sibling to the main settings.json, in the same per-user directory."""
     try:
         if __package__:
             from ..core.settings import settings_path
@@ -44,16 +43,23 @@ def _save_inference_config(data: dict) -> None:
     except Exception:
         pass
 
+
 __all__ = ["InferenceWindow"]
 
 
 class InferenceWindow(ToolWindowMixin):
     """Nonmodal, resizable floating window for Ollama inference.
 
-    Chain mode: checking the Chain checkbox immediately opens a child
-    Step N+1 window.  Each window carries a step number displayed in its
-    title and, when it has a parent, a placeholder label showing where the
-    parent's response will be injected.
+    Chain semantics:
+    - A chain is a linear sequence of steps.  Each step consumes the
+      preceding step's current result as part of its prompt.
+    - Running step N first runs any ancestor step that has no current
+      result, then runs N itself.  Optionally cascades to all subsequent
+      steps.
+    - Re-running any step preserves its past results in _history,
+      replaces _last_response, and immediately clears the current result
+      of every subsequent step.
+    - Only one execution operates on the chain at a time (root._chain_busy).
     """
 
     _step_counter: int = 0
@@ -71,14 +77,19 @@ class InferenceWindow(ToolWindowMixin):
         self._active_thread: threading.Thread | None = None
         self._context_path = context_path
         self._config = _load_inference_config()
-        self._last_response = ""
-        self._ran = False
+
+        # Current result and history.
+        self._last_response: str = ""
+        self._history: list[str] = []
+
+        # Chain-wide busy lock — only the root's value is authoritative.
+        self._chain_busy: bool = False
         self._on_finished = None
 
-        # Chain linkage
+        # Chain linkage.
         self._chain_parent = chain_parent
         self._chain_child: "InferenceWindow | None" = None
-        self._chain_order = chain_order  # "before" or "after" — fixed at spawn
+        self._chain_order = chain_order  # fixed at spawn
 
         self.top = tk.Toplevel(app.root)
         self.configure_tool_window(
@@ -86,7 +97,7 @@ class InferenceWindow(ToolWindowMixin):
         )
         self.top.protocol("WM_DELETE_WINDOW", self.close)
         self.top.columnconfigure(0, weight=1)
-        self.top.rowconfigure(3, weight=1)  # response area expands
+        self.top.rowconfigure(3, weight=1)
 
         self._build_connection_row()
         self._build_model_row()
@@ -95,16 +106,14 @@ class InferenceWindow(ToolWindowMixin):
         self._build_response_area()
         self._build_status_bar()
 
-        # Copy parent's model selection into this window.
         if chain_parent is not None:
             parent_model = chain_parent._model_var.get()
             if parent_model:
                 self._model_var.set(parent_model)
 
-        # Kick off an async status + model refresh on open.
         self.top.after(50, self._async_refresh_models)
 
-    # ── connection row ────────────────────────────────────────────────────────
+    # ── connection row ────────────────────────────────────────────────────
 
     def _build_connection_row(self):
         row = self.frame(self.top)
@@ -137,7 +146,7 @@ class InferenceWindow(ToolWindowMixin):
             row, "Refresh", self._async_refresh_models, tooltip_id="inference.refresh_models"
         ).grid(row=0, column=4, padx=(4, 6), pady=4)
 
-    # ── model row ─────────────────────────────────────────────────────────────
+    # ── model row ─────────────────────────────────────────────────────────
 
     def _build_model_row(self):
         row = self.frame(self.top)
@@ -162,7 +171,7 @@ class InferenceWindow(ToolWindowMixin):
         )
         self._info_btn.grid(row=0, column=2, padx=(4, 6), pady=4)
 
-    # ── inference config (collapsible) ────────────────────────────────────────
+    # ── inference config (collapsible) ────────────────────────────────────
 
     def _build_config_row(self):
         self._config_expanded = tk.BooleanVar(value=False)
@@ -182,7 +191,6 @@ class InferenceWindow(ToolWindowMixin):
         self._config_toggle_btn.pack(side=tk.LEFT, padx=6, pady=2)
 
         self._config_frame = self.frame(self.top)
-        # Not grid'd until expanded.
 
         cfg = self._config_frame
         cfg.columnconfigure(1, weight=1)
@@ -220,7 +228,7 @@ class InferenceWindow(ToolWindowMixin):
             self._config_toggle_btn.config(text="▶ Inference options")
             self._config_frame.grid_forget()
 
-    # ── prompt row ────────────────────────────────────────────────────────────
+    # ── prompt row ────────────────────────────────────────────────────────
 
     def _build_prompt_row(self):
         outer = self.frame(self.top)
@@ -231,14 +239,15 @@ class InferenceWindow(ToolWindowMixin):
 
         hdr = self.frame(outer)
         hdr.grid(row=0, column=0, sticky="ew")
-        self.label(hdr, text="Prompt", panel=True, font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=6, pady=2)
+        self.label(hdr, text="Prompt", panel=True, font=("Arial", 9, "bold")).pack(
+            side=tk.LEFT, padx=6, pady=2
+        )
         if self._context_path:
             self.label(
                 hdr, text=f"Context: {self._context_path.name}",
                 panel=True, font=("Arial", 9),
             ).pack(side=tk.LEFT, padx=4)
 
-        # Placeholder shown when this window has a parent (before the prompt).
         self._placeholder_before = tk.Label(
             outer,
             text=f"⬆  Step {self._step - 1} response will be prepended here",
@@ -257,7 +266,6 @@ class InferenceWindow(ToolWindowMixin):
         attach_tooltip(self._prompt_text, "inference.prompt", self.colors)
         self._prompt_text.bind("<Alt-Return>", lambda _ev: (self._run(), "break")[1])
 
-        # Placeholder shown below the prompt (after).
         self._placeholder_after = tk.Label(
             outer,
             text=f"⬇  Step {self._step - 1} response will be appended here",
@@ -265,7 +273,6 @@ class InferenceWindow(ToolWindowMixin):
             font=("Arial", 9, "italic"), anchor="w", padx=8, pady=4,
         )
 
-        # Grid the prompt area; placeholders are shown/hidden based on chain_order.
         if self._chain_parent is not None:
             if self._chain_order == "before":
                 self._placeholder_before.grid(row=1, column=0, sticky="ew")
@@ -283,7 +290,7 @@ class InferenceWindow(ToolWindowMixin):
         btn_row.grid(row=3, column=0, sticky="ew", pady=(4, 0))
 
         self._run_btn = self.button(
-            btn_row, "Run Inference", self._run, "success",
+            btn_row, "Run", self._run, "success",
             tooltip_id="inference.run",
         )
         self._run_btn.pack(side=tk.LEFT, padx=6, pady=4)
@@ -294,14 +301,20 @@ class InferenceWindow(ToolWindowMixin):
         )
         self._stop_btn.pack(side=tk.LEFT, padx=2, pady=4)
 
-        # ── chain controls ────────────────────────────────────────────────────
+        # Cascade to end toggle.
+        self._cascade_var = tk.BooleanVar(value=False)
+        self.checkbutton(
+            btn_row, "→ to end", self._cascade_var,
+            tooltip_id="inference.cascade",
+        ).pack(side=tk.LEFT, padx=(8, 2), pady=4)
+
+        # Chain: spawn next step window.
         self._chain_var = tk.BooleanVar(value=False)
-        chain_cb = self.checkbutton(
+        self.checkbutton(
             btn_row, "Chain", self._chain_var,
             command=self._on_chain_toggle,
             tooltip_id="inference.chain",
-        )
-        chain_cb.pack(side=tk.LEFT, padx=(12, 2), pady=4)
+        ).pack(side=tk.LEFT, padx=(8, 2), pady=4)
 
         self._chain_order_var = tk.StringVar(value="after")
         self._chain_controls = tk.Frame(btn_row, bg=self.colors["panel_bg"])
@@ -318,14 +331,14 @@ class InferenceWindow(ToolWindowMixin):
             )
             attach_tooltip(rb, "inference.chain_order", self.colors)
             rb.pack(side=tk.LEFT, padx=2)
-        self._chain_controls.pack_forget()  # hidden until chain checked
+        self._chain_controls.pack_forget()
 
         self.button(
             btn_row, "Clear", self._clear_all,
             tooltip_id="inference.clear",
         ).pack(side=tk.RIGHT, padx=6, pady=4)
 
-    # ── response area ─────────────────────────────────────────────────────────
+    # ── response area ─────────────────────────────────────────────────────
 
     def _build_response_area(self):
         outer = self.frame(self.top)
@@ -353,25 +366,23 @@ class InferenceWindow(ToolWindowMixin):
         )
         self._response_box.grid(row=1, column=0, sticky="nsew")
 
-    # ── status bar ────────────────────────────────────────────────────────────
+    # ── status bar ────────────────────────────────────────────────────────
 
     def _build_status_bar(self):
         self._status_bar_var = tk.StringVar(value="Ready.")
-        bar = tk.Label(
+        tk.Label(
             self.top, textvariable=self._status_bar_var,
             bg=self.colors["status_bg"], fg=self.colors["status_text"],
             anchor="w", padx=8, font=("Arial", 9),
-        )
-        bar.grid(row=5, column=0, sticky="ew")
+        ).grid(row=5, column=0, sticky="ew")
 
-    # ── async helpers ─────────────────────────────────────────────────────────
+    # ── async helpers ─────────────────────────────────────────────────────
 
     def _async_refresh_models(self):
         endpoint = self._endpoint_var.get().strip()
         self._client = OllamaClient(endpoint or "http://localhost:11434")
         self._set_status("Checking…", "muted_text")
-        t = threading.Thread(target=self._bg_refresh_models, daemon=True)
-        t.start()
+        threading.Thread(target=self._bg_refresh_models, daemon=True).start()
 
     def _bg_refresh_models(self):
         status = self._client.check_status()
@@ -389,7 +400,7 @@ class InferenceWindow(ToolWindowMixin):
         current = self._model_var.get()
         default = self._config.get("default_model", "")
         if current and current in models:
-            pass  # keep what was already set (e.g. copied from parent)
+            pass
         elif default and default in models:
             self._model_var.set(default)
         elif models and not current:
@@ -413,7 +424,7 @@ class InferenceWindow(ToolWindowMixin):
                 label=f"Clear default ('{default}')",
                 command=self._clear_default_model,
             )
-        if not menu.index("end") and menu.index("end") is None:
+        if menu.index("end") is None:
             return
         try:
             menu.tk_popup(event.x_root, event.y_root)
@@ -435,7 +446,7 @@ class InferenceWindow(ToolWindowMixin):
         self._status_dot.config(fg=color)
         self._status_label.config(text=text)
 
-    # ── model info popup ──────────────────────────────────────────────────────
+    # ── model info popup ──────────────────────────────────────────────────
 
     def _show_model_info(self):
         model = self._model_var.get().strip()
@@ -469,7 +480,23 @@ class InferenceWindow(ToolWindowMixin):
 
         threading.Thread(target=_bg, daemon=True).start()
 
-    # ── chain ─────────────────────────────────────────────────────────────────
+    # ── chain helpers ─────────────────────────────────────────────────────
+
+    def _chain_root(self) -> "InferenceWindow":
+        node = self
+        while node._chain_parent is not None:
+            node = node._chain_parent
+        return node
+
+    def _all_chain_nodes(self) -> list["InferenceWindow"]:
+        """All live nodes in chain order, root → end."""
+        nodes: list[InferenceWindow] = []
+        node: InferenceWindow | None = self._chain_root()
+        while node is not None:
+            nodes.append(node)
+            c = node._chain_child
+            node = c if (c is not None and c.top.winfo_exists()) else None
+        return nodes
 
     def _on_chain_toggle(self):
         if self._chain_var.get():
@@ -488,19 +515,8 @@ class InferenceWindow(ToolWindowMixin):
         child.top.lift()
         child.top.focus_force()
 
-    def _descendants(self):
-        node = self._chain_child
-        while node is not None and node.top.winfo_exists():
-            yield node
-            node = node._chain_child
-
-    def _reset_descendants(self):
-        for node in self._descendants():
-            node._ran = False
-            node._last_response = ""
-            ToolWindowMixin.show_text(node._response_box, "")
-
     def _compose_prompt(self) -> str | None:
+        """Return the combined prompt for this step, or None if parent has no result."""
         own = self._prompt_text.get("1.0", tk.END).strip()
         if self._chain_parent is None:
             return own
@@ -512,26 +528,15 @@ class InferenceWindow(ToolWindowMixin):
             return parent_response + sep + own
         return own + sep + parent_response
 
-    def _lineage(self):
-        nodes = []
-        node = self
-        while node is not None:
-            nodes.append(node)
-            node = node._chain_parent
-        nodes.reverse()
-        return nodes
-
-    # ── run / stop ────────────────────────────────────────────────────────────
+    # ── run / stop ────────────────────────────────────────────────────────
 
     def _get_options(self) -> dict | None:
         if not self._config_expanded.get():
             return None
         try:
-            opts = {}
-            t = float(self._temp_var.get())
-            opts["temperature"] = t
-            tp = float(self._top_p_var.get())
-            opts["top_p"] = tp
+            opts: dict = {}
+            opts["temperature"] = float(self._temp_var.get())
+            opts["top_p"] = float(self._top_p_var.get())
             ctx = int(self._ctx_var.get())
             if ctx > 0:
                 opts["num_ctx"] = ctx
@@ -543,19 +548,69 @@ class InferenceWindow(ToolWindowMixin):
             return None
 
     def _run(self):
-        lineage = self._lineage()
-        if any(n._active_thread and n._active_thread.is_alive() for n in lineage):
+        root = self._chain_root()
+        if root._chain_busy:
+            self._status_bar_var.set("Chain is busy — wait for the current run to finish.")
             return
-        queue = [n for n in lineage if n is self or not n._ran]
-        if self._chain_var.get():
-            self._open_chain_child()
+
+        # Build execution queue:
+        #   ancestors that have no current result (need to run first)
+        #   + this step (always)
+        #   + all subsequent steps if cascade is on
+        ancestors: list[InferenceWindow] = []
+        node = self._chain_parent
+        while node is not None:
+            ancestors.append(node)
+            node = node._chain_parent
+        ancestors.reverse()
+
+        queue: list[InferenceWindow] = [n for n in ancestors if not n._last_response.strip()]
+        queue.append(self)
+
+        if self._cascade_var.get():
+            child: InferenceWindow | None = self._chain_child
+            while child is not None and child.top.winfo_exists():
+                queue.append(child)
+                child = child._chain_child
+
+        # Immediately clear current results of all steps after self.
+        # (Subsequent steps in the queue will fill them; others stay empty.)
+        node_c: InferenceWindow | None = self._chain_child
+        while node_c is not None and node_c.top.winfo_exists():
+            if node_c._last_response:
+                node_c._last_response = ""
+                ToolWindowMixin.show_text(node_c._response_box, "")
+                node_c._status_bar_var.set("Cleared — waiting for earlier step.")
+            node_c = node_c._chain_child
+
+        # Lock the chain and disable Run on all nodes.
+        root._chain_busy = True
+        for n in self._all_chain_nodes():
+            if n.top.winfo_exists():
+                n.set_button_enabled(n._run_btn, False, "success")
+
         self._run_queue(queue, 0)
 
-    def _run_queue(self, queue, index):
+    def _run_queue(self, queue: list, index: int):
         if index >= len(queue):
+            self._unlock_chain()
             return
         node = queue[index]
-        node._execute(lambda ok: self._run_queue(queue, index + 1) if ok else None)
+        if not node.top.winfo_exists():
+            self._run_queue(queue, index + 1)
+            return
+        node._execute(
+            lambda ok, q=queue, i=index: (
+                self._run_queue(q, i + 1) if ok else self._unlock_chain()
+            )
+        )
+
+    def _unlock_chain(self):
+        root = self._chain_root()
+        root._chain_busy = False
+        for n in self._all_chain_nodes():
+            if n.top.winfo_exists():
+                n.set_button_enabled(n._run_btn, True, "success")
 
     def _execute(self, on_finished):
         model = self._model_var.get().strip()
@@ -565,7 +620,7 @@ class InferenceWindow(ToolWindowMixin):
             on_finished(False)
             return
         if prompt is None:
-            self._status_bar_var.set(f"Step {self._step - 1} has no response to inject.")
+            self._status_bar_var.set(f"Step {self._step - 1} has no result to inject.")
             on_finished(False)
             return
         if not prompt:
@@ -573,12 +628,13 @@ class InferenceWindow(ToolWindowMixin):
             on_finished(False)
             return
 
-        self._reset_descendants()
-        self._ran = False
+        # Preserve current result in history before replacing it.
+        if self._last_response:
+            self._history.append(self._last_response)
+
         self._on_finished = on_finished
         self._stop_event.clear()
         self._last_response = ""
-        self.set_button_enabled(self._run_btn, False, "success")
         self.set_button_enabled(self._stop_btn, True, "danger")
         self._status_bar_var.set(f"Running step {self._step} · {model}…")
         ToolWindowMixin.show_text(self._response_box, "")
@@ -613,46 +669,35 @@ class InferenceWindow(ToolWindowMixin):
         self.top.after(0, lambda: self._finish(meta))
 
     def _finish(self, meta: dict):
-        if not self.top.winfo_exists():
-            return
-        self.set_button_enabled(self._run_btn, True, "success")
-        self.set_button_enabled(self._stop_btn, False, "danger")
         stopped = meta.get("stopped")
-        elapsed = meta.get("elapsed_s", 0)
-        rtok = meta.get("response_tokens")
-        ptok = meta.get("prompt_tokens")
-        parts = []
-        if stopped:
-            parts.append("Stopped")
-        else:
-            parts.append("Done")
-        parts.append(f"{elapsed}s")
-        if rtok is not None:
-            parts.append(f"{rtok} response tokens")
-        if ptok is not None:
-            parts.append(f"{ptok} prompt tokens")
-        self._status_bar_var.set(" · ".join(parts))
         ok = not stopped
-        self._ran = ok
+        if self.top.winfo_exists():
+            self.set_button_enabled(self._stop_btn, False, "danger")
+            elapsed = meta.get("elapsed_s", 0)
+            rtok = meta.get("response_tokens")
+            ptok = meta.get("prompt_tokens")
+            parts = ["Stopped" if stopped else "Done", f"{elapsed}s"]
+            if rtok is not None:
+                parts.append(f"{rtok} response tokens")
+            if ptok is not None:
+                parts.append(f"{ptok} prompt tokens")
+            self._status_bar_var.set(" · ".join(parts))
         self._complete(ok)
 
     def _on_error(self, message: str):
         self.top.after(0, lambda: self._show_error(message))
 
     def _show_error(self, message: str):
-        if not self.top.winfo_exists():
-            return
-        self.set_button_enabled(self._run_btn, True, "success")
-        self.set_button_enabled(self._stop_btn, False, "danger")
-        lower = message.lower()
-        if "context" in lower and ("length" in lower or "limit" in lower or "exceed" in lower):
-            self._status_bar_var.set(
-                f"Context overflow — the combined prompt exceeds the model's context window. "
-                f"Reduce the context length or shorten your prompt. ({message})"
-            )
-        else:
-            self._status_bar_var.set(f"Error: {message}")
-        self._ran = False
+        if self.top.winfo_exists():
+            self.set_button_enabled(self._stop_btn, False, "danger")
+            lower = message.lower()
+            if "context" in lower and any(w in lower for w in ("length", "limit", "exceed")):
+                self._status_bar_var.set(
+                    "Context overflow — combined prompt exceeds the model's context window. "
+                    f"Reduce context length or shorten the prompt. ({message})"
+                )
+            else:
+                self._status_bar_var.set(f"Error: {message}")
         self._complete(False)
 
     def _complete(self, ok: bool):
@@ -665,7 +710,7 @@ class InferenceWindow(ToolWindowMixin):
         ToolWindowMixin.show_text(self._response_box, "")
         self._status_bar_var.set("Ready.")
 
-    # ── lifecycle ─────────────────────────────────────────────────────────────
+    # ── lifecycle ─────────────────────────────────────────────────────────
 
     def close(self):
         self._stop_event.set()

@@ -138,6 +138,7 @@ TOOLTIPS = {
     "inference.run": "Send the prompt to the selected model and stream the response.",
     "inference.stop": "Cancel the active inference request.",
     "inference.clear": "Clear the prompt and response areas.",
+    "inference.cascade": "When checked, Run continues through all subsequent steps to the end of the chain.",
     "inference.chain": "When checked, the next submit passes the last response into a new window.",
     "inference.chain_order": "Before: previous response comes first. After: new prompt comes first.",
 }

@@ -2,9 +2,13 @@
   "mcpServers": {
     "projectmapper": {
       "type": "stdio",
-      "command": "C:\\Jacob\\_AppDesign\\_SANDBOX\\ProjectMapper\\.venv\\Scripts\\projectmapper-mcp.exe",
+      "command": "C:\\Jacob\\_AppDesign\\_CURRENT-STABLE-PROTOTYPES\\.project-mapper\\.project-mapper\\.venv\\Scripts\\projectmapper-mcp.exe"
+    },
+    "dev-tools": {
+      "type": "stdio",
+      "command": "C:\\Jacob\\_AppDesign\\_CURRENT-STABLE-PROTOTYPES\\.project-mapper\\.tools\\.venv\\Scripts\\python.exe",
       "args": [
-        "--root", "C:\\Jacob\\_AppDesign\\_SANDBOX\\ProjectMapper"
+        "C:\\Jacob\\_AppDesign\\_CURRENT-STABLE-PROTOTYPES\\.project-mapper\\.tools\\src\\mcp_server.py"
       ]
     }
   }

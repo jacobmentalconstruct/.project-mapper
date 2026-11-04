@@ -4,6 +4,9 @@
 # Sidecar install — holds dev spines, snapshots, plans; not public
 .project-mapper/
 
+# Vendored dev-tools toolbox — local only
+.tools/
+
 # Generated artifacts — kept outside git so updates don't disturb your data
 spines/
 snapshots/
